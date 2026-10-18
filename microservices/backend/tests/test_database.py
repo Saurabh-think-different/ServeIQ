@@ -2,7 +2,8 @@ import sqlite3
 
 import pytest
 
-from phdata.db.database import SCHEMA_VERSION, initialize_schema, open_database
+from phdata.db.database import initialize_schema, open_database
+from phdata.db.schema import SCHEMA_VERSION
 
 
 @pytest.fixture

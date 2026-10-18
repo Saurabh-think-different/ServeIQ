@@ -1,16 +1,15 @@
 """SQLite schema and connection helpers for the local ServeWell POC."""
 
-from __future__ import annotations
-
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-SCHEMA_SQL = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
+from phdata.db.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
 def initialize_schema(connection: sqlite3.Connection) -> None:
-    """Create the current schema on an open connection; safe to call repeatedly."""
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA_SQL)
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
