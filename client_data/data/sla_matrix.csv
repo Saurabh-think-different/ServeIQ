@@ -1,0 +1,29 @@
+priority,category,first_response_minutes,resolution_target_minutes,escalation_to_l2_minutes
+P1,POS,15,60,30
+P2,POS,30,240,90
+P3,POS,60,480,180
+P4,POS,120,1440,360
+P1,Soft Serve,15,60,30
+P2,Soft Serve,30,240,90
+P3,Soft Serve,60,480,180
+P4,Soft Serve,120,1440,360
+P1,Online Orders,15,60,30
+P2,Online Orders,30,240,90
+P3,Online Orders,60,480,180
+P4,Online Orders,120,1440,360
+P1,Wi-Fi / Network,15,60,30
+P2,Wi-Fi / Network,30,240,90
+P3,Wi-Fi / Network,60,480,180
+P4,Wi-Fi / Network,120,1440,360
+P1,Printers,15,60,30
+P2,Printers,30,240,90
+P3,Printers,60,480,180
+P4,Printers,120,1440,360
+P1,Kiosks,15,60,30
+P2,Kiosks,30,240,90
+P3,Kiosks,60,480,180
+P4,Kiosks,120,1440,360
+P1,General,15,60,30
+P2,General,30,240,90
+P3,General,60,480,180
+P4,General,120,1440,360

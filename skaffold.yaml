@@ -1,0 +1,12 @@
+
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: servewell-ai
+
+manifests:
+  rawYaml:
+    - microservices/qdrant/skaffold.yaml
+
+deploy:
+  kubectl: {}
