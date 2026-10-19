@@ -55,6 +55,11 @@ class ActionProposal(ActionModel):
         return self
 
 
+class ActionProposalList(ActionModel):
+    run_id: NonBlank
+    actions: list[ActionProposal] = Field(max_length=50)
+
+
 class ActionDecisionRequest(ActionModel):
     decision: Literal["approve", "reject"]
 

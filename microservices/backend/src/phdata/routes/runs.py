@@ -60,7 +60,7 @@ def start_incident_run(
     return result
 
 
-@router.get("/runs/{run_id:path}", response_model=RunResult, name="get_run")
+@router.get("/runs/{run_id}", response_model=RunResult, name="get_run")
 def get_run(run_id: str, workflow: Workflow, _database: Database) -> RunResult:
     try:
         result = workflow.get_run(run_id)
