@@ -178,6 +178,46 @@ def test_changed_source_hash_or_unknown_applicability_never_guides(tmp_path):
         assert result.steps == [] and result.evidence == []
 
 
+def test_incompatible_model_and_out_of_scope_reports_escalate_without_search(tmp_path):
+    path = tmp_path / "runs.db"
+    seed_database(path)
+    connection = open_database(path)
+    connection.execute("UPDATE assets SET model='Other Printer' WHERE asset_id='A1'")
+    connection.commit()
+    connection.close()
+    retrieval = FakeRetrieval()
+    incompatible, _ = workflow(path, policies=[make_policy()], retrieval=retrieval).start_run(
+        "INC-1", idempotency_key="incompatible",
+    )
+    assert incompatible.routing_outcome == "l2_escalation"
+    assert retrieval.calls == []
+
+    out_of_scope_path = tmp_path / "out-of-scope.db"
+    seed_database(out_of_scope_path, category="POS", subcategory="Printer Offline")
+    out_of_scope, _ = workflow(
+        out_of_scope_path, policies=[make_policy()], retrieval=retrieval,
+    ).start_run("INC-1", idempotency_key="out-of-scope")
+    assert out_of_scope.routing_outcome == "l2_escalation"
+    assert retrieval.calls == []
+
+
+def test_conflicting_exact_policy_matches_escalate_without_search(tmp_path):
+    path = tmp_path / "runs.db"
+    seed_database(path)
+    second = make_policy().model_dump()
+    second["policy_id"] = "second-printer-policy"
+    second["steps"][0]["policy_id"] = "second-printer-policy"
+    second["steps"][0]["step_id"] = "printer.power-indicator.alternate"
+    retrieval = FakeRetrieval()
+    result, _ = workflow(
+        path,
+        policies=[make_policy(), ReviewedPolicy.model_validate(second)],
+        retrieval=retrieval,
+    ).start_run("INC-1", idempotency_key="conflict")
+    assert result.routing_outcome == "l2_escalation"
+    assert retrieval.calls == []
+
+
 def test_retrieval_failure_is_persisted_as_a_safe_failed_run(tmp_path):
     path = tmp_path / "runs.db"
     seed_database(path)

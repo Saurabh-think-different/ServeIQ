@@ -117,6 +117,67 @@ embedding-space mismatch `409`. Empty results explicitly report an evidence gap.
 Injected fake embeddings/local Qdrant tests prove mechanics, not semantic accuracy.
 See the [root guide](../../README.md) for request examples and manual checks.
 
+## Support runs, decisions, and audit
+
+All routes below use the same local operator bearer token. The synchronous run
+request accepts only `{}`; use a stable idempotency key for retries:
+
+```bash
+curl --fail-with-body -i http://127.0.0.1:8000/api/incidents/INC-123/runs \
+  -X POST \
+  -H "Authorization: Bearer ${INGESTION_TOKEN}" \
+  -H 'Idempotency-Key: run-INC-123-001' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+- `201` means the run resource was stored, not that analysis succeeded; inspect
+  its `status` and safe `error_code`. A same-key replay returns the stored run
+  with `200` and does not repeat retrieval or generation.
+- `GET /api/runs/{run_id}` reloads the persisted result; it does not call a provider.
+- `GET /api/incidents/{ticket_id}/runs?limit=20&offset=0` returns a bounded,
+  stable list and total count.
+- `GET /api/runs/{run_id}/actions` shows immutable local simulation previews.
+- `POST /api/actions/{action_id}/decision` accepts only
+  `{"decision":"approve"}` or `{"decision":"reject"}`. Decisions are
+  atomic and idempotent; approvals only record a local support-comment or L2
+  handoff simulation. They do not change incident source fields, contact a
+  person, call ITSM, or modify a device.
+- `GET /api/incidents/{ticket_id}/audit?limit=50&offset=0` returns bounded,
+  append-only events. The shared token is attributed honestly as
+  `local_operator`, not as an individual identity.
+
+```bash
+curl --fail-with-body http://127.0.0.1:8000/api/actions/ACT-123/decision \
+  -X POST \
+  -H "Authorization: Bearer ${INGESTION_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"reject"}'
+```
+
+Fresh databases initialize schema version 2; version-1 databases are upgraded
+transactionally without deleting existing rows. Startup marks orphaned `running`
+records as failed/interrupted once; it never replays model work.
+
+Generation is intentionally disabled until the model/provider, runtime text
+sharing, and exact guidance sections are approved. No generation key or model is
+required for intake, deterministic runs, reads, decisions, or tests. With no
+reviewed policy configured, the workflow asks for missing facts or escalates; it
+does not invent troubleshooting steps. Similarity is not confidence, and the
+local simulation is not a real handoff.
+
+## Pilot evaluation status
+
+A development census of the current dataset found 256 training tickets and 220
+labels; the exact `Printers / Printer Offline or Not Detected` subset has 15
+tickets and 13 labels. These inspected labels are development data, not a held-out
+set; the two unlabeled cases receive no invented expected outcome. The synthetic
+pytest evaluator covers eight behavior scenarios (seven pilot-eligible), but it
+is a contract check, not a model-quality score. Routing agreement on the dataset,
+escalation misses against labels, semantic grounding review, live latency/model
+usage, and ROI have not been measured. No live OpenAI or Rancher Desktop checks
+were performed for this implementation batch.
+
 ## Test
 
 ```bash
