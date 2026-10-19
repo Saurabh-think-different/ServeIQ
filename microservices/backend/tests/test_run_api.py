@@ -54,7 +54,8 @@ def test_run_api_creates_replays_reads_and_lists(client):
     page = test_client.get("/api/incidents/INC-RUN-1/runs?limit=20&offset=0", headers=AUTH)
     assert page.status_code == 200 and page.json()["total"] == 1
     connection = open_database(database_path)
-    assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 2
+    assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 3
+    assert connection.execute("SELECT COUNT(*) FROM action_proposals").fetchone()[0] == 1
     connection.close()
 
 

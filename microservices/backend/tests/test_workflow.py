@@ -133,7 +133,8 @@ def test_empty_policy_fails_closed_without_retrieval_or_generation(tmp_path):
     assert was_replayed and replay == result
     assert retrieval.calls == []
     connection = open_database(path)
-    assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 2
+    assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 3
+    assert connection.execute("SELECT COUNT(*) FROM action_proposals").fetchone()[0] == 1
     connection.close()
 
 
