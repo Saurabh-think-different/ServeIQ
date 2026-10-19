@@ -29,6 +29,8 @@ def synthetic_policy():
             "approved_content_sha256": sha256(SOURCE.encode()).hexdigest(),
             "disposition": "guidance",
             "instruction": "Confirm the printer is powered on.",
+            "applicability": "exact",
+            "allowed_models": ["EpsonTM-T88VI"],
         }],
     })
 
@@ -50,6 +52,17 @@ def test_policy_rejects_duplicate_or_mismatched_steps():
     policy = synthetic_policy().model_dump()
     policy["steps"][0]["policy_version"] = "unreviewed-v2"
     with pytest.raises(ValidationError, match="policy_version must match"):
+        ReviewedPolicy.model_validate(policy)
+
+
+def test_generic_guidance_requires_an_explicit_generic_policy_scope():
+    policy = synthetic_policy().model_dump()
+    policy["steps"][0]["applicability"] = "explicit_generic"
+    policy["steps"][0]["allowed_models"] = []
+    assert ReviewedPolicy.model_validate(policy).steps[0].applicability == "explicit_generic"
+
+    policy["steps"][0]["allowed_models"] = ["EpsonTM-T88VI"]
+    with pytest.raises(ValidationError, match="cannot have model/version constraints"):
         ReviewedPolicy.model_validate(policy)
 
 
