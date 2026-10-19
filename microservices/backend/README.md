@@ -85,9 +85,37 @@ Missing OpenAI credentials block only knowledge ingestion. Tests inject fake
 embeddings and never send client documents to OpenAI.
 
 Structured imports remain source snapshots, not a merge API for human-edited
-operational records. Fresh incident HTTP intake is separate future work; the
-structured module retains a validated single-ticket library function for that
-adapter. There is no route accepting arbitrary local file paths.
+operational records. Fresh incident HTTP intake uses a separate repository;
+the structured module retains a validated single-ticket source-import function. There is no route accepting arbitrary local file paths. Seed imports
+refuse collisions with API-created incidents rather than silently overwriting them.
+
+## Incident and retrieval APIs
+
+The shared operator dependency in `auth.py` protects ingestion, incident reads,
+intake, context and knowledge search. It remains a local operator token, not a
+production identity/authorization system.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/incidents` | Validate fresh report, preserve reported IDs, resolve exact references, persist atomically; `201` + Location, duplicate `409`. |
+| `GET /api/incidents` | Bounded list (`limit` 1–100, `offset` >= 0), total and optional exact status/category filters. |
+| `GET /api/incidents/{ticket_id}` | Persisted detail/history and relationship warnings, missing `404`. |
+| `GET /api/incident-context/{ticket_id}` | Exact typed context with resolved references, SLA targets, history, related IDs and explicit missing conditions. |
+| `POST /api/knowledge/search` | Query plus optional category/model/system_version and limit 1–10; cited passages and applicability notes. |
+
+Context excludes contact columns and historical resolution notes; free-text
+incident/history remains operator-provided and may contain PII. No generated SQL,
+LLM reasoning, inferred device telemetry or automatic actions occur. Clock targets
+are timezone-aware but are not proof that an SLA was fulfilled/breached.
+
+Retrieval validates collection/vector/payload identity against indexing. Known
+metadata mismatches are excluded; absent metadata/context yields unknown
+applicability. No model alias mapping or version-range compatibility is invented.
+Recognizable email/phone-like query text is redacted before provider transfer,
+without claiming comprehensive PII protection. Missing key/index returns `503`,
+embedding-space mismatch `409`. Empty results explicitly report an evidence gap.
+Injected fake embeddings/local Qdrant tests prove mechanics, not semantic accuracy.
+See the [root guide](../../README.md) for request examples and manual checks.
 
 ## Test
 
@@ -135,7 +163,7 @@ under `src/`. Retaining this package name preserves the API entrypoint and impor
 - `config.py`: shared environment settings and development defaults.
 - `routes/`: HTTP routers; liveness `/api/health` and readiness `/api/health/ready`.
 - `db/`: SQLite connection and schema initialization.
-- `ingestion/interfaces.py`: `IngestionStage.run()` protocol and shared typed report.
+- `ingestion/interfaces.py`: `IngestionStage.run()` abstract contract and shared typed report.
 - `ingestion/schemas.py`: Pydantic source-data validation, not handwritten parsers.
 - `ingestion/structured.py`: pandas input loading and concrete SQLite import logic.
 - `ingestion/knowledge.py`: bounded Markdown chunks, OpenAI embeddings and Qdrant writes.
@@ -144,7 +172,7 @@ under `src/`. Retaining this package name preserves the API entrypoint and impor
 
 Add additional layers only with concrete behavior. No plugin registry, abstract
 factory hierarchy, background worker, or generic `core/utils` scaffolding is
-needed. Support workflows and a retrieval/query endpoint remain future work.
+needed. Support workflows and approval-gated actions remain future work.
 
 API references were fetched through Context Hub for pandas, Pydantic, FastAPI,
 OpenAI and qdrant-client. Indexing/querying must use the same embedding model and

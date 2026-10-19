@@ -1,6 +1,7 @@
 """Shared contract for independently runnable ingestion stages."""
 
-from typing import Literal, Protocol
+from abc import ABC, abstractmethod
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -27,5 +28,7 @@ class IngestionError(ValueError):
         super().__init__("; ".join(errors))
 
 
-class IngestionStage(Protocol):
-    def run(self) -> IngestionReport: ...
+class IngestionStage(ABC):
+    @abstractmethod
+    def run(self) -> IngestionReport:
+        """Run the ingestion stage and return its report."""

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from phdata.config import Settings
 from phdata.db.database import open_database
-from phdata.ingestion.interfaces import IngestionError, IngestionReport
+from phdata.ingestion.interfaces import IngestionError, IngestionReport, IngestionStage
 from phdata.ingestion.schemas import Asset, ManifestEntry, SLATarget, Store, Ticket
 
 Model = TypeVar("Model", bound=BaseModel)
@@ -125,6 +125,12 @@ def _upsert(connection: sqlite3.Connection, table: str, keys: tuple[str, ...],
 
 def _write_tickets(connection: sqlite3.Connection, records: list[tuple[Ticket, str]],
                    report: IngestionReport) -> None:
+    runtime_ids = {row[0] for row in connection.execute(
+        "SELECT ticket_id FROM incidents WHERE source_path IS NULL"
+    )}
+    for ticket, source in records:
+        if ticket.ticket_id in runtime_ids:
+            raise _error(source, "ticket_id conflicts with an API-created incident; seed overwrite refused")
     stores = {row[0] for row in connection.execute("SELECT store_id FROM stores")}
     assets = dict(connection.execute("SELECT asset_id, store_id FROM assets"))
     known = {row[0] for row in connection.execute("SELECT ticket_id FROM incidents")}
@@ -213,7 +219,7 @@ def ingest_ticket_file(path: str | Path, connection: sqlite3.Connection) -> Inge
     return report
 
 
-class StructuredIngestion:
+class StructuredIngestion(IngestionStage):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
