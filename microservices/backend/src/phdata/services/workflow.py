@@ -373,6 +373,15 @@ class SupportWorkflow:
                 approval_status="not_required" if result.status == "completed" else "failed",
                 payload=AuditPayload(summary=event_summary, error_code=result.error_code),
             )
+            if result.status == "completed":
+                from phdata.services.actions import create_outcome_proposal
+
+                create_outcome_proposal(
+                    connection,
+                    result,
+                    context_fingerprint_value=fingerprint,
+                    created_at=self._now(),
+                )
             connection.commit()
             return result
         except Exception:

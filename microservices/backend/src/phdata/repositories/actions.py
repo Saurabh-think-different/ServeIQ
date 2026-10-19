@@ -16,6 +16,10 @@ from phdata.models.actions import (
 )
 
 
+class ActionStateConflict(Exception):
+    """A proposal is missing or no longer in the expected pending state."""
+
+
 def proposal_hash_for(proposal: ActionProposal) -> str:
     normalized = json.dumps(
         {
@@ -91,9 +95,43 @@ def get_proposal(connection: sqlite3.Connection, action_id: str) -> ActionPropos
     return _proposal_from_row(row) if row is not None else None
 
 
+def get_decision_result(
+    connection: sqlite3.Connection,
+    action_id: str,
+) -> ActionDecisionResult | None:
+    row = connection.execute(
+        "SELECT result_json FROM action_proposals WHERE action_id = ?", (action_id,),
+    ).fetchone()
+    if row is None or row["result_json"] is None:
+        return None
+    return ActionDecisionResult.model_validate_json(row["result_json"])
+
+
+def store_action_decision(
+    connection: sqlite3.Connection,
+    result: ActionDecisionResult,
+) -> None:
+    """Apply a pending-to-terminal transition without committing the caller's transaction."""
+    status = result.status
+    cursor = connection.execute(
+        """UPDATE action_proposals SET status=?, decided_at=?, decided_by=?, result_json=?
+        WHERE action_id=? AND status='pending'""",
+        (
+            status,
+            result.decided_at.isoformat(),
+            result.decided_by,
+            result.model_dump_json(),
+            result.action_id,
+        ),
+    )
+    if cursor.rowcount != 1:
+        raise ActionStateConflict("proposal is missing or no longer pending")
+
+
 def list_proposals_for_run(connection: sqlite3.Connection, run_id: str) -> list[ActionProposal]:
     rows = connection.execute(
-        "SELECT * FROM action_proposals WHERE run_id = ? ORDER BY created_at, action_id",
+        "SELECT * FROM action_proposals WHERE run_id = ? "
+        "ORDER BY created_at, action_id LIMIT 50",
         (run_id,),
     ).fetchall()
     return [_proposal_from_row(row) for row in rows]
