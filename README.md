@@ -13,8 +13,10 @@ SQLite for structured data, and Qdrant for the future knowledge index.
   storage for SQLite and Qdrant.
 
 Fresh incident create/list/detail, exact structured context, and cited KB search
-are available through operator-protected HTTP routes. Incident workflows, action
-approvals and Vue are not implemented yet. Embeddings/search are tested offline
+are available through operator-protected HTTP routes. The Vue operator workspace
+provides incident intake/queue, detail/context, manual cited search and explicit
+imports. Incident workflows and action
+approvals are not implemented yet. Embeddings/search are tested offline
 with fake vectors and local Qdrant; real provider behavior and semantic relevance
 still require manual validation.
 
@@ -43,6 +45,7 @@ skaffold dev --kube-context rancher-desktop --port-forward --cleanup=false
 Skaffold builds locally without pushing an image registry, rewrites the backend
 image reference, applies the manifests, and forwards the HTTP services:
 
+- Frontend workspace: <http://127.0.0.1:8080>
 - Backend: <http://127.0.0.1:8000/docs>
 - Liveness: <http://127.0.0.1:8000/api/health>
 - SQLite readiness: <http://127.0.0.1:8000/api/health/ready>
@@ -227,6 +230,32 @@ kubectl --context rancher-desktop describe deployment servewell-backend
 - **Qdrant has no collections:** run an authorized knowledge ingestion with an
   approved OpenAI key. Inspect stage errors/blocked status; health readiness does
   not check index contents. Local mocked tests do not require provider keys.
+
+## Vue development and tests
+
+The frontend depends on backend PR #18 or its merged equivalent. It uses the
+existing shared operator token, never a bundled default credential or browser
+storage. Refresh requires reconnecting. Run the backend at localhost:8000 (or
+forward its Service), then:
+
+```bash
+cd microservices/frontend
+npm ci
+npm run dev
+```
+
+Open <http://127.0.0.1:5173>. Vite proxies `/api` locally; the containerized UI at
+localhost:8080 uses Nginx to proxy the same paths to FastAPI. Knowledge imports
+require explicit transfer confirmation; provider keys remain server-side.
+
+```bash
+npm test
+npm run build
+```
+
+See the [frontend guide](microservices/frontend/README.md) for screen scope,
+auth limitations and manual Rancher checks. Frontend tests use mocked boundaries;
+no live-provider or cluster verification is implied.
 
 ## Python development and tests
 
