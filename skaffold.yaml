@@ -1,12 +1,43 @@
-
 apiVersion: skaffold/v4beta11
 kind: Config
 metadata:
   name: servewell-ai
 
+build:
+  local:
+    push: false
+    # Use the active Docker CLI context (rancher-desktop), sharing the cluster's image store.
+    useDockerCLI: true
+  artifacts:
+    - image: servewell-backend
+      context: .
+      docker:
+        dockerfile: microservices/backend/Dockerfile
+
 manifests:
   rawYaml:
-    - microservices/qdrant/skaffold.yaml
+    - microservices/qdrant/k8s.yaml
+    - microservices/backend/k8s.yaml
 
 deploy:
+  kubeContext: rancher-desktop
   kubectl: {}
+
+portForward:
+  - resourceType: service
+    resourceName: servewell-backend
+    port: 8000
+    localPort: 8000
+    address: 127.0.0.1
+
+profiles:
+  - name: qdrant-port-forward
+    patches:
+      - op: add
+        path: /portForward/-
+        value:
+          resourceType: service
+          resourceName: qdrant
+          port: 6333
+          localPort: 6333
+          address: 127.0.0.1

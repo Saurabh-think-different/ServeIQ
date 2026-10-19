@@ -8,5 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+.local/
 .DS_Store
 .client_data/.DS_Store
