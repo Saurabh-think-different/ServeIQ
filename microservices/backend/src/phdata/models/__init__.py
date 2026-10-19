@@ -1,0 +1,1 @@
+"""Typed application output models."""

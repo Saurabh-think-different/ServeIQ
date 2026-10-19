@@ -18,7 +18,7 @@ from typing import Any, Callable
 from openai import OpenAI
 from qdrant_client import QdrantClient, models
 
-from phdata.ingestion.interfaces import IngestionError, IngestionReport
+from phdata.ingestion.interfaces import IngestionError, IngestionReport, IngestionStage
 
 NAMESPACE = "servewell.knowledge.v1"
 POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, NAMESPACE)
@@ -163,7 +163,7 @@ def _chunks(data_dir: Path) -> dict[str, dict[str, Any]]:
     return chunks
 
 
-class KnowledgeIngestion:
+class KnowledgeIngestion(IngestionStage):
     """Use settings' embedding space for ingestion and subsequent query callers.
 
     Injected clients must honor the same timeout/retry contract as the direct SDKs.

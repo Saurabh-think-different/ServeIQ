@@ -12,9 +12,11 @@ SQLite for structured data, and Qdrant for the future knowledge index.
 - A frozen uv workspace, a non-root backend image, and persistent local Kubernetes
   storage for SQLite and Qdrant.
 
-Incident workflows, a retrieval/query API, fresh incident HTTP intake, and Vue
-are not implemented yet. Knowledge ingestion is tested with mocked embeddings;
-a running Qdrant service alone is not evidence of semantic-search quality.
+Fresh incident create/list/detail, exact structured context, and cited KB search
+are available through operator-protected HTTP routes. Incident workflows, action
+approvals and Vue are not implemented yet. Embeddings/search are tested offline
+with fake vectors and local Qdrant; real provider behavior and semantic relevance
+still require manual validation.
 
 ## Rancher Desktop + Skaffold
 
@@ -129,8 +131,61 @@ Ingestion is never an API restart side effect. The in-process ingestion lock is
 for the documented **one process/one replica** setup, not distributed execution.
 
 Imports own the source incident fields/history/relations; removed source children
-are reconciled transactionally. This is not a merge policy for future human-edited
-operational tickets or an authorization mechanism for support actions.
+are reconciled transactionally. Seed imports refuse IDs owned by API-created
+incidents (`source_path IS NULL`) rather than overwriting runtime intake. Other
+seed updates remain source snapshots, not a merge policy for human-edited tickets.
+
+## Fresh incidents and context
+
+All routes below require the same local operator bearer token as ingestion.
+
+```bash
+curl --fail-with-body http://127.0.0.1:8000/api/incidents \
+  -H "Authorization: Bearer $INGESTION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"description":"Receipt printer is offline","category":"Printers","priority":"P2"}'
+```
+
+- `POST /api/incidents`: description required; optional reported store/asset IDs,
+  subject, category, priority, version and offset-aware history. Generates an ID
+  unless supplied; duplicates return `409`. New incidents start `Open`.
+- `GET /api/incidents?limit=25&offset=0`: bounded queue with total count; optional
+  exact `status` and `category` filters.
+- `GET /api/incidents/{ticket_id}`: persisted incident/history and warnings, or `404`.
+- `GET /api/incident-context/{ticket_id}`: exact store/asset/SLA/history/related
+  lookups, missing conditions and offset-aware clock targets. No model calls,
+  guessed IDs, contact columns or resolution-answer fields. Free-text reports
+  may still contain personal data; context is not comprehensive PII redaction.
+
+Missing IDs are accepted and preserved as missing; incompatible store/asset
+relationships remain unresolved. Context reads can resolve exact reported IDs
+against reference data that arrived later; persisted intake detail still reports
+its original resolution state. SLA target deadlines do not prove a response or
+resolution breach: fulfillment and actual escalation require additional evidence.
+
+## Cited knowledge search
+
+```bash
+curl --fail-with-body http://127.0.0.1:8000/api/knowledge/search \
+  -H "Authorization: Bearer $INGESTION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"receipt printer offline","category":"Printers","limit":5}'
+```
+
+Search uses the configured ingestion model/dimensions and rejects incompatible
+embedding spaces. Missing provider key/index returns an actionable `503`; a
+space mismatch returns `409`. Responses include bounded passages, source paths,
+sections, raw similarity scores and applicability notes. Scores are **not confidence**.
+Explicitly conflicting model/version/category metadata is filtered; generic or
+incompletely described guidance is marked applicability unknown. No aliases or
+version ranges are inferred. Empty results are an evidence gap, not generated
+instructions. Search does not resolve conflicting policy or authorize actions.
+
+Recognizable email/phone-like query fragments are redacted before embedding;
+this is not comprehensive PII protection. Provider-backed queries and KB uploads
+require approved content and a configured key. This batch was tested **offline
+only**; Rancher Desktop and live retrieval checks are intentionally left for
+manual review. No new deployment or OpenAI request was performed for this batch.
 
 ## State and lifecycle
 
