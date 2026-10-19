@@ -12,6 +12,7 @@ from phdata.models.runs import RunPage, RunRequest, RunResult
 from phdata.repositories import incidents, runs
 from phdata.repositories.runs import RunStateConflict
 from phdata.routes.incidents import Database
+from phdata.services.recommendations import OpenAIRecommendationAdapter
 from phdata.services.workflow import IncidentNotFound, IdempotencyConflict, SupportWorkflow
 
 router = APIRouter(tags=["runs"])
@@ -20,7 +21,8 @@ router = APIRouter(tags=["runs"])
 def support_workflow(
     settings: Annotated[Settings, Depends(operator_settings)],
 ) -> SupportWorkflow:
-    return SupportWorkflow(settings)
+    recommender = OpenAIRecommendationAdapter(settings) if settings.generation_model else None
+    return SupportWorkflow(settings, recommender=recommender)
 
 
 Workflow = Annotated[SupportWorkflow, Depends(support_workflow)]

@@ -6,13 +6,21 @@ from datetime import datetime, timezone
 import json
 import sqlite3
 from hashlib import sha256
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Literal, Protocol, Sequence
+
+from pydantic import ValidationError
 
 from phdata.config import Settings
 from phdata.db.database import open_database
 from phdata.models.actions import AuditPayload
 from phdata.models.context import IncidentContext
 from phdata.models.policy import ReviewedPolicy, ReviewedPolicyStep
+from phdata.models.recommendations import (
+    RecommendationCandidateStep,
+    RecommendationEvidence,
+    RecommendationInput,
+    RecommendationOutput,
+)
 from phdata.models.retrieval import SearchRequest, SearchResponse
 from phdata.models.runs import (
     EvidenceSnapshot,
@@ -32,11 +40,19 @@ from phdata.repositories.runs import (
 )
 from phdata.repositories.support import SupportRepository
 from phdata.services.policy import reviewed_source_matches
+from phdata.services.recommendations import RecommendationError
 from phdata.services.retrieval import KnowledgeRetrieval, RetrievalError
 
 
 class RetrievalPort(Protocol):
     def search(self, request: SearchRequest) -> SearchResponse: ...
+
+
+class RecommenderPort(Protocol):
+    model: str | None
+    prompt_version: str
+
+    def recommend(self, request: RecommendationInput) -> RecommendationOutput: ...
 
 
 class IncidentNotFound(Exception):
@@ -55,12 +71,14 @@ class SupportWorkflow:
         settings: Settings,
         *,
         retrieval: RetrievalPort | None = None,
+        recommender: RecommenderPort | None = None,
         policies: Sequence[ReviewedPolicy] = (),
         connection_factory: Callable[[], sqlite3.Connection] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
         self.retrieval = retrieval or KnowledgeRetrieval(settings)
+        self.recommender = recommender
         self.policies = tuple(policies)
         self.connection_factory = connection_factory or self._open_database
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -165,6 +183,8 @@ class SupportWorkflow:
                 else ("knowledge_unavailable", "Knowledge search is temporarily unavailable.")
             )
             result = self._failure(run, code, message)
+        except RecommendationError as error:
+            result = self._failure(run, error.error_code, error.safe_message)
         except Exception:
             result = self._failure(run, "workflow_failed", "Support analysis could not be completed safely.")
         return self._finalize(run, result, snapshot, fingerprint), False
@@ -284,14 +304,104 @@ class SupportWorkflow:
                 evidence=[],
                 warnings=[*warnings, "Evidence gap: no exact reviewed source hash matched."],
             )
+        evidence = list(evidence_by_id.values())[:10]
+        if self.recommender is not None:
+            return self._recommend_from_model(run, context, policy, steps[:10], evidence, warnings)
         return self._completed(
             run,
             "l1_guided",
             requester="Follow only the reviewed checks listed below. No device changes were made.",
             ticket="Deterministic selection of exact, reviewed guidance; no action was executed.",
             steps=steps[:10],
-            evidence=list(evidence_by_id.values())[:20],
+            evidence=evidence,
             warnings=warnings[:20],
+        )
+
+    def _recommend_from_model(
+        self,
+        run: RunResult,
+        context: IncidentContext,
+        policy: ReviewedPolicy,
+        candidates: list[ReviewedStep],
+        evidence: list[EvidenceSnapshot],
+        warnings: list[str],
+    ) -> RunResult:
+        model = self.recommender.model
+        prompt_version = self.recommender.prompt_version
+        if not model or not prompt_version:
+            raise RecommendationError("generation_not_configured", "Support generation is not configured.")
+        if any(len(item.content) > 4000 for item in evidence):
+            raise RecommendationError("generation_input_too_large", "Approved source text exceeds the generation input limit.")
+        request = RecommendationInput(
+            category=policy.category,
+            symptom=policy.symptom_scope,
+            verified_model=context.asset.model if context.asset else None,
+            verified_system_version=context.asset.system_version if context.asset else None,
+            candidate_steps=[
+                RecommendationCandidateStep(
+                    step_id=step.step_id,
+                    instruction=step.instruction,
+                    evidence_ids=step.evidence_ids,
+                )
+                for step in candidates
+            ],
+            evidence=[
+                RecommendationEvidence(
+                    evidence_id=item.evidence_id,
+                    source_path=item.source_path,
+                    section=item.section,
+                    content=item.content,
+                    applicability=item.applicability,
+                )
+                for item in evidence
+            ],
+        )
+        try:
+            selection = RecommendationOutput.model_validate(self.recommender.recommend(request))
+        except ValidationError:
+            raise RecommendationError("invalid_model_output", "Support generation returned an invalid selection.") from None
+        candidate_by_id = {step.step_id: step for step in candidates}
+        evidence_by_id = {item.evidence_id: item for item in evidence}
+        selected_steps = []
+        selected_evidence_ids = set()
+        for selected in selection.selected_steps:
+            candidate = candidate_by_id.get(selected.step_id)
+            if candidate is None or not set(selected.evidence_ids) <= set(candidate.evidence_ids):
+                raise RecommendationError("invalid_model_output", "Support generation selected an unknown step or citation.")
+            selected_steps.append(ReviewedStep(
+                step_id=candidate.step_id,
+                instruction=candidate.instruction,
+                evidence_ids=selected.evidence_ids,
+                operator_role="store_operator",
+            ))
+            selected_evidence_ids.update(selected.evidence_ids)
+        if not selected_evidence_ids <= evidence_by_id.keys():
+            raise RecommendationError("invalid_model_output", "Support generation cited evidence outside this run.")
+
+        if selection.outcome == "l2_escalation":
+            return self._completed(
+                run,
+                "l2_escalation",
+                requester="The reviewed policy selected human support. No device changes were made.",
+                ticket="Generation selected the supported escalation outcome; no action was executed.",
+                warnings=warnings[:20],
+                decision_mechanism="generation",
+                model=model,
+                prompt_version=prompt_version,
+            )
+        if not selected_steps or not selected_evidence_ids:
+            raise RecommendationError("invalid_model_output", "Guided support output requires a cited reviewed step.")
+        return self._completed(
+            run,
+            "l1_guided",
+            requester="Follow only the reviewed checks listed below. No device changes were made.",
+            ticket="Generation selected exact reviewed steps; no action was executed.",
+            steps=selected_steps,
+            evidence=[item for item in evidence if item.evidence_id in selected_evidence_ids],
+            warnings=warnings[:20],
+            decision_mechanism="generation",
+            model=model,
+            prompt_version=prompt_version,
         )
 
     def _completed(
@@ -305,6 +415,9 @@ class SupportWorkflow:
         steps: list[ReviewedStep] | None = None,
         evidence: list[EvidenceSnapshot] | None = None,
         warnings: list[str] | None = None,
+        decision_mechanism: Literal["deterministic", "generation"] = "deterministic",
+        model: str | None = None,
+        prompt_version: str | None = None,
     ) -> RunResult:
         return RunResult(
             run_id=run.run_id,
@@ -313,13 +426,15 @@ class SupportWorkflow:
             started_at=run.started_at,
             completed_at=self._now(),
             routing_outcome=outcome,
-            decision_mechanism="deterministic",
+            decision_mechanism=decision_mechanism,
             summary_for_requester=requester,
             summary_for_ticket=ticket,
             questions=(questions or [])[:10],
             steps=(steps or [])[:10],
             evidence=(evidence or [])[:20],
             warnings=(warnings or [])[:20],
+            model=model,
+            prompt_version=prompt_version,
         )
 
     def _failure(self, run: RunResult, code: str, message: str) -> RunResult:
