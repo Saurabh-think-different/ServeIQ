@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
 class PolicyModel(BaseModel):
@@ -25,6 +25,7 @@ class ReviewedPolicyStep(PolicyModel):
     approved_content_sha256: Sha256
     disposition: Literal["guidance", "escalation"]
     instruction: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    applicability: Literal["exact", "explicit_generic"]
     allowed_models: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]] = Field(default_factory=list, max_length=20)
     allowed_system_versions: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]] = Field(default_factory=list, max_length=20)
 
@@ -34,6 +35,15 @@ class ReviewedPolicyStep(PolicyModel):
         if value.startswith("/") or ".." in value.split("/"):
             raise ValueError("source_path must be a relative source path")
         return value
+
+    @model_validator(mode="after")
+    def applicability_is_explicit(self) -> "ReviewedPolicyStep":
+        constrained = bool(self.allowed_models or self.allowed_system_versions)
+        if self.applicability == "explicit_generic" and constrained:
+            raise ValueError("explicit generic policy steps cannot have model/version constraints")
+        if self.applicability == "exact" and not constrained:
+            raise ValueError("exact policy steps require a model or system-version constraint")
+        return self
 
 
 class ReviewedPolicy(PolicyModel):
