@@ -1,0 +1,1 @@
+"""ServeWell IT support backend application."""

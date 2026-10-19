@@ -1,0 +1,30 @@
+[project]
+name = "servewell-backend"
+version = "0.1.0"
+description = "ServeWell IT support agent API"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.143.3",
+    "openai>=3.35.1",
+    "requests>=2.34.2",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[project.scripts]
+servewell-api = "phdata.main:run"
+servewell-data = "phdata.ingestion.cli:main"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "phdata"
+module-root = "src"
