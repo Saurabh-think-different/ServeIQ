@@ -8,9 +8,12 @@ import pytest
 from phdata.config import get_settings
 from phdata.db.database import open_database
 from phdata.models.policy import ReviewedPolicy
+from phdata.models.recommendations import RecommendationOutput
 from phdata.models.retrieval import Passage, SearchResponse
+from phdata.models.runs import evidence_id_for
 from phdata.repositories.runs import insert_run
 from phdata.repositories.support import SupportRepository
+from phdata.services.recommendations import RecommendationError
 from phdata.services.retrieval import RetrievalError
 from phdata.services.workflow import (
     IdempotencyConflict,
@@ -25,6 +28,7 @@ SOURCE_PATH = "kb/runbooks/printer-offline.md"
 SECTION = "Power indicator"
 CONTENT = "Confirm the printer power indicator is illuminated."
 CONTENT_HASH = sha256(CONTENT.encode()).hexdigest()
+EVIDENCE_ID = evidence_id_for(SOURCE_PATH, SECTION, CONTENT_HASH)
 
 
 def seed_database(path: Path, *, category="Printers", subcategory="Printer Offline or Not Detected"):
@@ -104,12 +108,26 @@ class FakeRetrieval:
         return SearchResponse(passages=[self.passage], evidence_gap=False, warnings=[])
 
 
-def workflow(path, *, policies=(), retrieval=None, clock=None):
+class FakeRecommender:
+    model = "gpt-6-luna"
+    prompt_version = "test-selection-v1"
+
+    def __init__(self, output):
+        self.output = output
+        self.calls = []
+
+    def recommend(self, request):
+        self.calls.append(request)
+        return self.output
+
+
+def workflow(path, *, policies=(), retrieval=None, recommender=None, clock=None):
     settings = replace(get_settings(), database_path=path, ingestion_token="test-token")
     return SupportWorkflow(
         settings,
         policies=policies,
         retrieval=retrieval,
+        recommender=recommender,
         connection_factory=lambda: open_database(path),
         clock=clock or (lambda: NOW),
     )
@@ -119,7 +137,8 @@ def test_empty_policy_fails_closed_without_retrieval_or_generation(tmp_path):
     path = tmp_path / "runs.db"
     seed_database(path)
     retrieval = FakeRetrieval()
-    service = workflow(path, retrieval=retrieval)
+    recommender = FakeRecommender(RecommendationOutput(outcome="l2_escalation"))
+    service = workflow(path, retrieval=retrieval, recommender=recommender)
 
     result, replayed = service.start_run("INC-1", idempotency_key="key-1")
     assert not replayed
@@ -128,6 +147,7 @@ def test_empty_policy_fails_closed_without_retrieval_or_generation(tmp_path):
     assert result.steps == [] and result.evidence == []
     assert any("No reviewed support policy" in warning for warning in result.warnings)
     assert retrieval.calls == []
+    assert recommender.calls == []
 
     replay, was_replayed = service.start_run("INC-1", idempotency_key="key-1")
     assert was_replayed and replay == result
@@ -154,6 +174,76 @@ def test_exact_reviewed_guidance_is_snapshotted_and_cited(tmp_path):
     assert result.evidence[0].content == CONTENT
     assert result.model is None
     assert "SERIAL-SECRET" not in str(result.model_dump())
+
+
+def test_generation_can_select_only_reviewed_steps_and_run_evidence(tmp_path):
+    path = tmp_path / "runs.db"
+    seed_database(path)
+    evidence_id = evidence_id_for(SOURCE_PATH, SECTION, CONTENT_HASH)
+    recommender = FakeRecommender(RecommendationOutput(
+        outcome="l1_guided",
+        selected_steps=[{"step_id": "printer.power-indicator", "evidence_ids": [evidence_id]}],
+    ))
+    result, _ = workflow(
+        path,
+        policies=[make_policy()],
+        retrieval=FakeRetrieval(),
+        recommender=recommender,
+    ).start_run("INC-1", idempotency_key="generated")
+    assert result.status == "completed" and result.routing_outcome == "l1_guided"
+    assert result.decision_mechanism == "generation"
+    assert result.model == "gpt-6-luna" and result.prompt_version == "test-selection-v1"
+    assert result.steps[0].instruction == "Confirm the printer power indicator is illuminated."
+    assert result.steps[0].evidence_ids == [evidence_id]
+    assert recommender.calls[0].verified_model == "EpsonTM-T88VI"
+    assert "description" not in recommender.calls[0].model_dump()
+    assert "serial_number" not in str(recommender.calls[0].model_dump())
+
+
+@pytest.mark.parametrize(
+    "step_id,citation_id",
+    [("unreviewed.step", EVIDENCE_ID), ("printer.power-indicator", "b" * 64)],
+)
+def test_unknown_model_step_or_citation_fails_closed(tmp_path, step_id, citation_id):
+    path = tmp_path / "runs.db"
+    seed_database(path)
+    recommender = FakeRecommender(RecommendationOutput(
+        outcome="l1_guided",
+        selected_steps=[{"step_id": step_id, "evidence_ids": [citation_id]}],
+    ))
+    result, _ = workflow(
+        path,
+        policies=[make_policy()],
+        retrieval=FakeRetrieval(),
+        recommender=recommender,
+    ).start_run("INC-1", idempotency_key="invalid-selection")
+    assert result.status == "failed" and result.error_code == "invalid_model_output"
+    assert result.steps == [] and result.evidence == []
+
+
+def test_generation_refusal_is_a_failed_run_without_a_proposal(tmp_path):
+    path = tmp_path / "runs.db"
+    seed_database(path)
+
+    class RefusingRecommender(FakeRecommender):
+        def recommend(self, request):
+            self.calls.append(request)
+            raise RecommendationError("model_refusal", "Support generation declined this request.")
+
+    recommender = RefusingRecommender(RecommendationOutput(
+        outcome="l2_escalation",
+        selected_steps=[],
+    ))
+    result, _ = workflow(
+        path,
+        policies=[make_policy()],
+        retrieval=FakeRetrieval(),
+        recommender=recommender,
+    ).start_run("INC-1", idempotency_key="refusal")
+    assert result.status == "failed" and result.error_code == "model_refusal"
+    connection = open_database(path)
+    assert connection.execute("SELECT COUNT(*) FROM action_proposals").fetchone()[0] == 0
+    connection.close()
 
 
 def test_changed_source_hash_or_unknown_applicability_never_guides(tmp_path):

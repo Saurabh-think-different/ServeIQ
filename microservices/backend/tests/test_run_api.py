@@ -18,6 +18,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_PATH", str(database_path))
     monkeypatch.setenv("INGESTION_TOKEN", TOKEN)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GENERATION_MODEL", raising=False)
     with TestClient(app) as test_client:
         yield test_client, database_path
 

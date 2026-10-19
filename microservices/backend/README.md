@@ -38,10 +38,12 @@ The API and ingestion stages share `src/phdata/config.py`:
 | `DATABASE_PATH` | `microservices/backend/.local/servewell.db` | `/var/lib/servewell/servewell.db` |
 | `QDRANT_URL` | `http://127.0.0.1:6333` | `http://qdrant:6333` |
 | `INGESTION_TOKEN` | Unset; import route disabled | Optional Kubernetes Secret |
-| `OPENAI_API_KEY` | Unset; knowledge stage blocked | Optional Kubernetes Secret |
+| `OPENAI_API_KEY` | Unset; provider calls disabled | Optional Kubernetes Secret |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Same |
 | `EMBEDDING_DIMENSIONS` | `1536` | Same |
 | `QDRANT_COLLECTION` | `servewell-kb` | Same |
+| `GENERATION_MODEL` | Unset; no default | Server-side optional setting |
+| `GENERATION_TIMEOUT_SECONDS` | `20` (bounded 1–120) | Same |
 
 Explicit container paths avoid assuming a source checkout inside site-packages.
 Outside a checkout, defaults are relative to the working directory; configure
@@ -81,8 +83,9 @@ roll back another store's completed work.
 
 Reports contain inserted/updated/skipped/deleted counts, warnings and sanitized
 errors. Provider failures never return raw credential-bearing exception text.
-Missing OpenAI credentials block only knowledge ingestion. Tests inject fake
-embeddings and never send client documents to OpenAI.
+Missing OpenAI credentials block knowledge ingestion/search and generation when
+invoked. Tests inject fake embeddings/recommendation clients and never send client
+documents to OpenAI.
 
 Structured imports remain source snapshots, not a merge API for human-edited
 operational records. Fresh incident HTTP intake uses a separate repository;
@@ -159,12 +162,18 @@ Fresh databases initialize schema version 2; version-1 databases are upgraded
 transactionally without deleting existing rows. Startup marks orphaned `running`
 records as failed/interrupted once; it never replays model work.
 
-Generation is intentionally disabled until the model/provider, runtime text
-sharing, and exact guidance sections are approved. No generation key or model is
-required for intake, deterministic runs, reads, decisions, or tests. With no
-reviewed policy configured, the workflow asks for missing facts or escalates; it
-does not invent troubleshooting steps. Similarity is not confidence, and the
-local simulation is not a real handoff.
+OpenAI generation was approved with the server-selected model identifier
+`gpt-6-luna` and bounded runtime text sharing, but the model has not been live
+verified. `GENERATION_MODEL` has no default and must be configured server-side;
+client requests cannot override it. The adapter uses a bounded timeout and zero
+SDK retries. No production guidance sections are approved or loaded, so current
+runs never invoke generation: they ask for missing facts or escalate instead of
+inventing troubleshooting steps. If reviewed policy is added later, the provider
+input is limited to verified device metadata, reviewed candidate instructions,
+and exact cited source snippets; free-text descriptions, history, contacts, and
+serial numbers are excluded. Intake, context, deterministic runs, reads,
+decisions, and tests require no generation model or provider call. Similarity is
+not confidence, and the local simulation is not a real handoff.
 
 ## Pilot evaluation status
 

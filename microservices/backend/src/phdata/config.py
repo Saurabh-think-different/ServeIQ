@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,18 @@ class Settings:
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
     qdrant_collection: str = "servewell-kb"
+    generation_model: str | None = None
+    generation_timeout_seconds: float = 20.0
+
+
+def _generation_timeout_seconds() -> float:
+    try:
+        value = float(os.getenv("GENERATION_TIMEOUT_SECONDS", "20"))
+    except ValueError as error:
+        raise ValueError("GENERATION_TIMEOUT_SECONDS must be a number from 1 to 120") from error
+    if not math.isfinite(value) or not 1 <= value <= 120:
+        raise ValueError("GENERATION_TIMEOUT_SECONDS must be a number from 1 to 120")
+    return value
 
 
 def get_settings() -> Settings:
@@ -45,4 +58,6 @@ def get_settings() -> Settings:
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1536")),
         qdrant_collection=os.getenv("QDRANT_COLLECTION", "servewell-kb"),
+        generation_model=os.getenv("GENERATION_MODEL", "").strip() or None,
+        generation_timeout_seconds=_generation_timeout_seconds(),
     )
