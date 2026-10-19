@@ -28,7 +28,7 @@ lockfile and bundles curated source data without evaluation labels.
 
 ## Configuration
 
-The API and data CLI share `src/phdata/config.py`:
+The API and ingestion stages share `src/phdata/config.py`:
 
 | Variable | Checkout default | Container default |
 | --- | --- | --- |
@@ -37,40 +37,57 @@ The API and data CLI share `src/phdata/config.py`:
 | `DATA_DIR` | Repository `client_data/` | `/opt/dataset` |
 | `DATABASE_PATH` | `microservices/backend/.local/servewell.db` | `/var/lib/servewell/servewell.db` |
 | `QDRANT_URL` | `http://127.0.0.1:6333` | `http://qdrant:6333` |
+| `INGESTION_TOKEN` | Unset; import route disabled | Optional Kubernetes Secret |
+| `OPENAI_API_KEY` | Unset; knowledge stage blocked | Optional Kubernetes Secret |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Same |
+| `EMBEDDING_DIMENSIONS` | `1536` | Same |
+| `QDRANT_COLLECTION` | `servewell-kb` | Same |
 
-The explicit container paths avoid relying on a source checkout being present
-in site-packages. Outside a checkout, CLI defaults are relative to the working
-directory; set `DATA_DIR` and `DATABASE_PATH` explicitly for installed deployments.
-Qdrant configuration is reserved for upcoming retrieval; no collection is
-created or queried by the current API.
+Explicit container paths avoid assuming a source checkout inside site-packages.
+Outside a checkout, defaults are relative to the working directory; configure
+`DATA_DIR` and `DATABASE_PATH` explicitly. The optional `servewell-ingestion`
+Kubernetes Secret supplies the operator/provider keys; see the root guide.
+Never log, commit, or embed either credential in a browser.
 
-## Load Data
+## HTTP ingestion
 
-Import the checked-in dataset into the local SQLite database:
-
-```bash
-uv run --project microservices/backend servewell-data ingest
-```
-
-The command uses `client_data/` and writes to
-`microservices/backend/.local/servewell.db` by default. Set `DATA_DIR` and
-`DATABASE_PATH` to override these defaults; CLI flags `--data-dir` and
-`--database-path` take precedence over environment settings.
-
-The checked-in manifest names ticket files under `tickets/raw/`, while this
-checkout stores them under `tickets/train/`. The importer applies the explicit
-`raw` to `train` path mapping and reports how many files used it. Any other
-missing path fails with its manifest row and ticket ID. Imported ticket history
-and relations are source-owned snapshots: entries removed from a re-imported
-source ticket are removed transactionally from those tables and reported as
-`deleted`. This does not delete agent runs or audit events, and it is not a merge
-policy for future human-edited operational history.
-
-Import a fresh ticket JSON after loading the reference data:
+The CLI has been removed. Call the API against server-configured inputs:
 
 ```bash
-uv run --project microservices/backend servewell-data ticket /path/to/INC-NEW.json
+curl --fail-with-body http://127.0.0.1:8000/api/ingestions \
+  -H "Authorization: Bearer $INGESTION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"all"}'
 ```
+
+Select `structured`, `knowledge`, or `all`; extra fields and arbitrary input
+paths are rejected. The endpoint is synchronous and serializes ingestion within
+the documented one-process/one-replica deployment. It returns independent stage
+reports and overall `succeeded`, `partial`, or `failed` status. HTTP `200` means
+the report is available, not that every stage succeeded. A failed stage does not
+roll back another store's completed work.
+
+- **Structured:** pandas reads CSVs as strings without implicit null inference;
+  Pydantic validates rows and nested ticket JSON. SQLite writes are transactional,
+  repeated imports are duplicate-safe, and unknown/mismatched store/asset IDs
+  remain unresolved with warnings. The explicit `tickets/raw` → `tickets/train`
+  mapping is reported. Source history/relations removed from an imported ticket
+  are deleted transactionally; agent runs/audit events are not touched.
+- **Knowledge:** section-aware Markdown chunks under `kb/` are embedded through
+  OpenAI and indexed in Qdrant with stable IDs, content hashes and provenance.
+  Unchanged chunks are skipped; stale chunks are removed only after successful
+  replacement. Model/dimension mismatch blocks indexing. Indexing does not decide
+  which conflicting runbook instruction is safe for an operator.
+
+Reports contain inserted/updated/skipped/deleted counts, warnings and sanitized
+errors. Provider failures never return raw credential-bearing exception text.
+Missing OpenAI credentials block only knowledge ingestion. Tests inject fake
+embeddings and never send client documents to OpenAI.
+
+Structured imports remain source snapshots, not a merge API for human-edited
+operational records. Fresh incident HTTP intake is separate future work; the
+structured module retains a validated single-ticket library function for that
+adapter. There is no route accepting arbitrary local file paths.
 
 ## Test
 
@@ -93,7 +110,8 @@ backend/
 │       ├── routes/
 │       │   ├── __init__.py
 │       │   ├── router.py
-│       │   └── health.py
+│       │   ├── health.py
+│       │   └── ingestion.py
 │       ├── db/
 │       │   ├── __init__.py
 │       │   ├── database.py
@@ -101,37 +119,35 @@ backend/
 │       │   └── schema.sql
 │       └── ingestion/
 │           ├── __init__.py
-│           ├── cli.py
-│           └── importer.py
+│           ├── interfaces.py
+│           ├── schemas.py
+│           ├── structured.py
+│           ├── knowledge.py
+│           └── pipeline.py
 └── tests/
 ```
 
 `src/` is the Python source root, not another application package. `phdata/`
 contains the single backend package; there are no sibling application layers
-under `src/`. Retaining this package name preserves the existing CLI entrypoints
-and imports.
+under `src/`. Retaining this package name preserves the API entrypoint and imports.
 
 - `main.py`: FastAPI app, route registration, and server entrypoint.
 - `config.py`: shared environment settings and development defaults.
 - `routes/`: HTTP routers; liveness `/api/health` and readiness `/api/health/ready`.
 - `db/`: SQLite connection and schema initialization.
-- `ingestion/`: reusable CSV/JSON importer and its CLI adapter.
-- `tests/`: HTTP API, database, and importer regression tests.
+- `ingestion/interfaces.py`: `IngestionStage.run()` protocol and shared typed report.
+- `ingestion/schemas.py`: Pydantic source-data validation, not handwritten parsers.
+- `ingestion/structured.py`: pandas input loading and concrete SQLite import logic.
+- `ingestion/knowledge.py`: bounded Markdown chunks, OpenAI embeddings and Qdrant writes.
+- `ingestion/pipeline.py`: stage selection and independent result aggregation.
+- `tests/`: HTTP, source validation, database and offline provider regression tests.
 
-Add models, repositories, and services when their first concrete feature needs
-them. Keep runtime settings in `config.py`; do not restore empty `core/`,
-`utils/`, or parallel `src/api/` scaffolding. HTTP ingestion and support workflows are planned, not implemented
-by this layout cleanup.
+Add additional layers only with concrete behavior. No plugin registry, abstract
+factory hierarchy, background worker, or generic `core/utils` scaffolding is
+needed. Support workflows and a retrieval/query endpoint remain future work.
 
-## Planned knowledge embeddings
-
-Use OpenAI embeddings for KB indexing and retrieval, with
-`text-embedding-3-small` as the proposed initial model. The model and vector
-size must match between indexing, querying, and the Qdrant collection. Keep
-`OPENAI_API_KEY` server-side and exclude labels, evaluator notes, and contact
-details from embedding inputs.
-
-The OpenAI embeddings API documentation was checked through Context Hub
-(`chub get openai/chat --lang py`). No embedding requests or Qdrant indexing
-are performed by this change; the implementation belongs to issue
-[#5](https://github.com/Saurabh-think-different/ServeIQ/issues/5).
+API references were fetched through Context Hub for pandas, Pydantic, FastAPI,
+OpenAI and qdrant-client. Indexing/querying must use the same embedding model and
+vector size. Changing them requires a new compatible collection/rebuild; never
+mix vectors from different embedding spaces. Labels, evaluator notes and ticket
+contact details stay out of the knowledge input.

@@ -1,9 +1,9 @@
-"""Environment configuration shared by the API and data CLI."""
+"""Environment configuration for the API and ingestion stages."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -14,6 +14,11 @@ class Settings:
     data_dir: Path
     database_path: Path
     qdrant_url: str
+    ingestion_token: str | None = field(default=None, repr=False)
+    openai_api_key: str | None = field(default=None, repr=False)
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    qdrant_collection: str = "servewell-kb"
 
 
 def get_settings() -> Settings:
@@ -35,4 +40,9 @@ def get_settings() -> Settings:
         data_dir=Path(os.getenv("DATA_DIR", str(data_default))),
         database_path=Path(os.getenv("DATABASE_PATH", str(database_default))),
         qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+        ingestion_token=os.getenv("INGESTION_TOKEN") or None,
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1536")),
+        qdrant_collection=os.getenv("QDRANT_COLLECTION", "servewell-kb"),
     )

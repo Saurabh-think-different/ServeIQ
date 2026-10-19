@@ -6,12 +6,15 @@ SQLite for structured data, and Qdrant for the future knowledge index.
 ## Current scope
 
 - HTTP liveness and database readiness endpoints.
-- Repeatable CSV/JSON ingestion through the data CLI, including fresh ticket JSON.
+- Operator-protected HTTP ingestion: pandas/Pydantic-validated CSV/ticket JSON
+  into SQLite, and Markdown knowledge through OpenAI embeddings into Qdrant.
+- Independent ingestion stages sharing a small interface and typed reports.
 - A frozen uv workspace, a non-root backend image, and persistent local Kubernetes
   storage for SQLite and Qdrant.
 
-HTTP ingestion, incident workflows, Vue, and OpenAI-backed KB indexing are not
-implemented yet. A running Qdrant service is not evidence of working vector search.
+Incident workflows, a retrieval/query API, fresh incident HTTP intake, and Vue
+are not implemented yet. Knowledge ingestion is tested with mocked embeddings;
+a running Qdrant service alone is not evidence of semantic-search quality.
 
 ## Rancher Desktop + Skaffold
 
@@ -51,9 +54,11 @@ skaffold dev --kube-context rancher-desktop --port-forward --cleanup=false -p qd
 
 Qdrant readiness is then available at <http://127.0.0.1:6333/readyz>.
 
-No API keys are needed for this foundation. No calls to OpenAI occur at startup
-or during structured ingestion. The backend readiness check initializes/opens
-SQLite; it deliberately does not depend on Qdrant or a model provider.
+No API keys are needed for health checks or structured ingestion. No calls to
+OpenAI occur at startup. Knowledge ingestion requires `OPENAI_API_KEY` and sends
+KB passage text to OpenAI; do not enable it for content that is not approved for
+that provider. The backend readiness check initializes/opens SQLite; it
+deliberately does not depend on Qdrant or a model provider.
 
 To build/deploy once without leaving a watcher running:
 
@@ -68,23 +73,64 @@ another terminal when needed:
 kubectl --context rancher-desktop port-forward --address 127.0.0.1 service/servewell-backend 8000:8000
 ```
 
-## Load the bundled structured dataset
+## Ingest through HTTP
 
 The image contains curated inputs at `/opt/dataset`, excluding evaluation labels.
-No macOS `hostPath`, manual file copying, or ingestion sidecar is needed.
+No macOS `hostPath`, CLI wrapper, ingestion sidecar, or arbitrary-path request is
+needed. `POST /api/ingestions` takes `{"target":"structured"}`, `"knowledge"`, or
+`"all"` and runs synchronously against server-configured inputs.
+
+For host development, set a local operator token before starting the API:
 
 ```bash
-kubectl --context rancher-desktop exec deployment/servewell-backend -- servewell-data ingest
+export INGESTION_TOKEN="$(openssl rand -hex 32)"
+uv run --project microservices/backend servewell-api
 ```
 
-Run the same command again to verify unchanged rows are skipped. Import reports
-include inserted/updated/skipped/deleted counts, warnings, and the explicit manifest
-`tickets/raw` → `tickets/train` mapping. Loading data is an explicit command, not
-an API restart side effect.
+For Kubernetes, create the optional secret **before deploying**, using a local
+untracked environment file outside the build context:
 
-The importer can update source-owned incident fields; this is a seed/import
-foundation, not yet a safe merge API for future human-edited operational tickets.
-Do not assume approved workflow edits can be overwritten by re-importing seeds.
+```bash
+kubectl --context rancher-desktop create secret generic servewell-ingestion \
+  --from-env-file=/absolute/path/to/local-ingestion.env --dry-run=client -o yaml \
+  | kubectl --context rancher-desktop apply -f -
+```
+
+The file contains `INGESTION_TOKEN=<random-local-token>` and, only for approved
+knowledge ingestion, `OPENAI_API_KEY=<provider-key>`. Never commit it. After a
+secret change, restart the backend deployment to refresh its environment.
+Keep the same operator token in the terminal issuing requests:
+
+```bash
+curl --fail-with-body http://127.0.0.1:8000/api/ingestions \
+  -H "Authorization: Bearer $INGESTION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"structured"}'
+```
+
+Use `knowledge` to index KB Markdown with OpenAI `text-embedding-3-small`, or
+`all` to run both stages. Structured data/tickets and labels are not embedded.
+Missing OpenAI credentials block knowledge ingestion without affecting an
+explicitly selected structured import. A missing operator token disables the
+route (`503`), wrong credentials return `401`, invalid requests `422`, and an
+already-running ingestion `409`.
+
+A completed pipeline returns HTTP `200` with `status` (`succeeded`, `partial`,
+or `failed`) and independent stage reports. **Check the body, not just the HTTP
+status.** Structured data commits atomically in SQLite. Qdrant writes are not
+part of that transaction; partial vector writes can be reconciled by rerunning.
+No cleanup of stale chunks occurs after a failed replacement. Unchanged chunks
+skip embedding calls; changing the embedding identity requires a fresh compatible
+collection, not mixing embedding spaces.
+
+Repeat a structured request to verify unchanged rows are skipped. Reports include
+counts, warnings, and the explicit `tickets/raw` → `tickets/train` mapping.
+Ingestion is never an API restart side effect. The in-process ingestion lock is
+for the documented **one process/one replica** setup, not distributed execution.
+
+Imports own the source incident fields/history/relations; removed source children
+are reconciled transactionally. This is not a merge policy for future human-edited
+operational tickets or an authorization mechanism for support actions.
 
 ## State and lifecycle
 
@@ -123,7 +169,9 @@ kubectl --context rancher-desktop describe deployment servewell-backend
 - **Pending PVC:** verify Rancher Desktop's default local storage provisioner.
 - **Port already occupied:** stop the specific conflicting local forward or use
   a different local port; do not kill processes by name.
-- **Qdrant has no collections:** expected until KB ingestion is implemented.
+- **Qdrant has no collections:** run an authorized knowledge ingestion with an
+  approved OpenAI key. Inspect stage errors/blocked status; health readiness does
+  not check index contents. Local mocked tests do not require provider keys.
 
 ## Python development and tests
 
@@ -134,5 +182,5 @@ uv run --project microservices/backend pytest microservices/backend/tests -q
 ```
 
 See the [backend README](microservices/backend/README.md) for the package layout,
-configuration, and CLI examples. Keep secrets in local environment/secret stores,
+configuration, and HTTP ingestion examples. Keep secrets in local environment/secret stores,
 not in source, build contexts, or browser code.

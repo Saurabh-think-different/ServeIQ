@@ -7,13 +7,15 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.143.3",
     "openai>=3.35.1",
+    "pandas>=3.0.6",
+    "pydantic>=2.14.1",
+    "qdrant-client>=1.19.1",
     "requests>=2.34.2",
     "uvicorn[standard]>=0.34.0",
 ]
 
 [project.scripts]
 servewell-api = "phdata.main:run"
-servewell-data = "phdata.ingestion.cli:main"
 
 [dependency-groups]
 dev = [
