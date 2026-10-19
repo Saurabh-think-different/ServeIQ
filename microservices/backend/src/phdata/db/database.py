@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-from phdata.db.schema import SCHEMA_SQL, SCHEMA_VERSION
+from phdata.db.schema import MIGRATION_002_SQL, SCHEMA_SQL, SCHEMA_VERSION
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -13,18 +13,48 @@ def _configure_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
 
 
+def _execute_sql_script(connection: sqlite3.Connection, script: str) -> None:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            sql = statement.strip()
+            if sql:
+                connection.execute(sql)
+            statement = ""
+    if statement.strip():
+        raise sqlite3.OperationalError("incomplete SQL statement in schema script")
+
+
 def initialize_schema(connection: sqlite3.Connection) -> None:
     current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if current_version > SCHEMA_VERSION:
+        raise sqlite3.OperationalError(
+            f"database schema version {current_version} is newer than supported version {SCHEMA_VERSION}"
+        )
     if current_version == SCHEMA_VERSION:
         if not connection.in_transaction:
             _configure_connection(connection)
         return
     if connection.in_transaction:
         raise sqlite3.OperationalError("schema initialization cannot run inside a transaction")
+    if current_version < 0:
+        raise sqlite3.OperationalError(f"unsupported negative database schema version {current_version}")
 
     _configure_connection(connection)
-    connection.executescript(SCHEMA_SQL)
-    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if current_version == 0:
+            _execute_sql_script(connection, SCHEMA_SQL)
+            _execute_sql_script(connection, MIGRATION_002_SQL)
+        elif current_version == 1:
+            _execute_sql_script(connection, MIGRATION_002_SQL)
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
+    except sqlite3.Error:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
 
 
 def open_database(database_path: str | Path) -> sqlite3.Connection:
