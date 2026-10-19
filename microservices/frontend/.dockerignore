@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.env
+tests
+coverage
+README.md
+*.log
