@@ -1,407 +1,215 @@
-# ServeIQ
+# ServeIQ — phData incident assistant
 
-Local proof of concept for ServeWell IT support: one FastAPI backend,
-SQLite for structured data and audit history, Qdrant for cited knowledge retrieval,
-and a Vue operator workspace.
+Agentic IT support for the synthetic ServeWell Hospitality dataset: a Vue workspace, FastAPI backend, grounded knowledge retrieval, and live agent-event streaming.
 
-## Current scope
+## Documentation
 
-- HTTP liveness and database readiness endpoints.
-- Operator-protected HTTP ingestion: pandas/Pydantic-validated CSV/ticket JSON
-  into SQLite, and Markdown knowledge through OpenAI embeddings into Qdrant.
-- Independent ingestion stages sharing a small interface and typed reports.
-- A frozen uv workspace, a non-root backend image, and persistent local Kubernetes
-  storage for SQLite and Qdrant.
+- [Backend](phdata/microservices/backend/README.md): configuration, ingestion, tools, API, evaluation, and tests.
+- [Frontend](phdata/microservices/frontend/README.md): development, UI structure, proxying, and streaming.
+- [Qdrant](phdata/microservices/qdrant/README.md): vector indexing and storage operations.
+- [Dataset](client_data/README.md): inventory, schemas, and application data flow.
+- [Project challenge](project_challenge.md): original requirements.
 
-Operator-protected routes and the Vue workspace provide intake/queue,
-reported versus verified context, explicit imports, manual cited search,
-persisted support runs and summaries, proposal previews, approval/rejection of
-local simulations, and audit history. Timed-out writes retain recovery metadata;
-the UI never automatically retries them. Credentials remain memory-only.
+## Current capabilities
 
-Guidance defaults to human escalation until an explicitly reviewed, narrowly
-scoped policy is configured. Client KB conflicts have not been approved away.
-Historical v1 runs/audits are readable as explicitly untyped legacy records,
-not reinterpreted as modern guidance or approvable actions.
+- Manager login, assigned-store context, incident history, and multi-turn support conversations.
+- Model selection with a conversation-pinned model, live tool timeline, citations, and durable event history.
+- Structured ingestion of stores, assets, SLAs, versions, and historical tickets into SQLite.
+- Markdown KB ingestion with parent/child chunking, OpenAI embeddings, and Qdrant similarity search.
+- Google ADK agent using LiteLLM for OpenAI GPT models and server-bound support tools.
+- Clarification, resolution, and **simulated** L2 handoff outcomes with an audit trail.
+- Privileged, bounded evaluation runs for curated, training, or custom scenarios.
 
-Unit tests use deterministic boundaries. Separate live synthetic checks have
-verified OpenAI embeddings and the production structured-output adapter with
-`gpt-6-luna`; this does not establish client-corpus retrieval relevance, model
-accuracy on real incidents, measured business savings, or production readiness.
+L2 escalation records a handoff locally; **no real L2 team or external ITSM dispatcher is contacted**. Streaming exposes public status/tool events, not token-by-token provider output or private reasoning.
 
-## Rancher Desktop + Skaffold
+## Architecture
 
-Prerequisites: Rancher Desktop with Kubernetes and the **Moby/dockerd** container
-engine, plus Docker CLI, kubectl, and Skaffold. The local Kubernetes context must
-be `rancher-desktop`.
-
-Check the contexts and node before deploying:
-
-```bash
-docker context show
-kubectl --context rancher-desktop get nodes
-skaffold version
+```mermaid
+flowchart LR
+    Manager[Store manager] --> UI[Vue 3 workspace]
+    UI -->|/api - authenticated HTTP and POST SSE| Proxy[Vite dev proxy or Nginx]
+    Proxy -->|Strip /api prefix| API[FastAPI backend]
+    API --> DB[(SQLite)]
+    API --> Agent[Google ADK agent]
+    Agent --> Gateway[LiteLLM]
+    Gateway --> GPT[OpenAI GPT model]
+    Agent --> Tools[Server-bound support tools]
+    Tools --> DB
+    Tools --> Retrieval[KB retrieval]
+    Retrieval --> Embeddings[OpenAI embeddings]
+    Retrieval --> Vectors[(Qdrant)]
+    Retrieval -->|Parent context and citations| DB
+    Operator[Operator] -->|X-Ingestion-Key| Admin[Ingestion and evaluation APIs]
+    Admin --> API
+    Data[client_data] --> Admin
 ```
 
-The Docker context should also be `rancher-desktop`. If necessary, select it in
-your terminal before starting Skaffold:
+### One support turn
 
-```bash
-export DOCKER_CONTEXT=rancher-desktop
-skaffold dev --kube-context rancher-desktop --port-forward --cleanup=false
+```mermaid
+sequenceDiagram
+    actor Manager
+    participant UI as Vue workspace
+    participant API as FastAPI
+    participant DB as SQLite
+    participant Agent as ADK and support tools
+    participant KB as Embeddings and Qdrant
+    Manager->>UI: Create incident or reply
+    UI->>API: Save incident and user message
+    API->>DB: Persist conversation
+    UI->>API: POST /llm/stream with token and incident_id
+    API->>DB: Create assistant run and load history
+    API->>Agent: Rebuild session with trusted owner context
+    loop Tool execution
+        Agent->>DB: Read scoped support data
+        Agent->>KB: Search knowledge when needed
+        KB-->>Agent: Relevant evidence
+        Agent-->>API: Public status and tool results
+        API->>DB: Persist ordered events
+        API-->>UI: SSE timeline events
+    end
+    Agent-->>API: user_input, complete_task, or escalate_to_l2
+    API->>DB: Save final message, status, and optional handoff
+    API-->>UI: done control event
+    UI->>API: Reload durable conversation and events
 ```
 
-Skaffold builds locally without pushing an image registry, rewrites the backend
-image reference, applies the manifests, and forwards the HTTP services:
+## Repository structure
 
-- Frontend workspace: <http://127.0.0.1:8080>
-- Backend: <http://127.0.0.1:8000/docs>
-- Liveness: <http://127.0.0.1:8000/api/health>
-- SQLite readiness: <http://127.0.0.1:8000/api/health/ready>
-
-Qdrant is internal by default. To also forward its HTTP endpoint to localhost,
-start development with the optional profile:
-
-```bash
-skaffold dev --kube-context rancher-desktop --port-forward --cleanup=false -p qdrant-port-forward
+```text
+.
+├── README.md
+├── project_challenge.md
+├── client_data/                   # Reference data, KB, tickets, evaluation labels
+├── phdata/
+│   ├── microservices/
+│   │   ├── backend/               # Standalone uv project; FastAPI, ADK, tests
+│   │   ├── frontend/              # Vue 3 + Vite; Nginx production serving
+│   │   └── qdrant/                # Pinned vector-store image and configuration
+│   └── deploy/                    # Kubernetes Deployments, Services, PVCs
+├── skaffold.yaml                  # Local builds, deployment, port forwarding
+├── pyproject.toml                 # Root project; not the backend runtime project
+└── src/phdata2/                   # Root Python package
 ```
 
-Qdrant readiness is then available at <http://127.0.0.1:6333/readyz>.
+## Local development
 
-No API keys are needed for health checks or structured ingestion. No calls to
-OpenAI occur at startup. Knowledge ingestion requires `OPENAI_API_KEY` and sends
-KB passage text to OpenAI; do not enable it for content that is not approved for
-that provider. The backend readiness check initializes/opens SQLite; it
-deliberately does not depend on Qdrant or a model provider.
+### 1. Configure and start the backend
 
-To build/deploy once without leaving a watcher running:
+Prerequisites: Python 3.12, [uv](https://docs.astral.sh/uv/), Node.js 22.12+ with npm, and a reachable Qdrant instance for KB operations. The included Kubernetes deployment supplies Qdrant; see [deployment](#rancher-desktop-deployment).
+
+From the repository root:
 
 ```bash
-skaffold run --kube-context rancher-desktop
+uv sync --project phdata/microservices/backend --extra dev
+cd phdata/microservices/backend
+cp .env.example .env
+mkdir -p data
 ```
 
-That command does not keep port forwards running. Add a temporary forward in
-another terminal when needed:
+Edit the backend environment file, following [.env.example](phdata/microservices/backend/.env.example):
+
+- Set a private `JWT_SECRET` of at least 32 characters.
+- Set `OPENAI_API_KEY` for agent calls and embeddings.
+- Set a private `INGESTION_API_KEY` to enable ingestion and evaluations.
+- Keep `DATASET_ROOT=../../../client_data` when running from the backend directory.
+- Set `QDRANT_URL` to the reachable store, locally `http://localhost:6333`.
+- Choose account-accessible `LLM_MODEL` and `ALLOWED_MODELS` values. The configured default is `gpt-6.1-sol`; configuration is not proof of provider availability.
+
+Never commit environment files or credentials. Authentication and basic incident operations do not need OpenAI or Qdrant; grounded support requires ingestion and provider access.
+
+Run from the backend directory so the environment file and relative database path resolve correctly:
 
 ```bash
-kubectl --context rancher-desktop port-forward --address 127.0.0.1 service/servewell-backend 8000:8000
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-## Configure OpenAI without sharing credentials
+API schemas: <http://localhost:8000/docs>. Default database: `./data/phdata.db`, relative to the backend working directory.
 
-Create a dedicated OpenAI project API key with API billing enabled. Do not paste
-it into chat, commit it, place it in frontend configuration, or print Kubernetes
-Secret contents. A ChatGPT subscription does not itself provide API credits.
+### 2. Ingest the dataset
 
-Keep local configuration **outside the checkout**:
+With the backend and Qdrant running, use a separate terminal. Set `INGESTION_API_KEY` in that shell to the same private value configured on the backend; the environment file is not automatically exported to your shell.
 
 ```bash
-install -d -m 700 "$HOME/.config/serveiq"
-(umask 077; touch "$HOME/.config/serveiq/openai.env")
-chmod 600 "$HOME/.config/serveiq/openai.env"
-code "$HOME/.config/serveiq/openai.env"
+curl --fail-with-body -X POST http://localhost:8000/ingestion/all \
+  -H "X-Ingestion-Key: $INGESTION_API_KEY"
+curl --fail-with-body http://localhost:8000/ingestion/status \
+  -H "X-Ingestion-Key: $INGESTION_API_KEY"
+curl --fail-with-body http://localhost:8000/ingestion/managers \
+  -H "X-Ingestion-Key: $INGESTION_API_KEY"
 ```
 
-In that file, enter these values without shell quotes or `export` prefixes:
+Structured ingestion provisions demo manager accounts and assigns stores/history. Pick an email returned by `/ingestion/managers`; newly provisioned accounts use the demo password `operator`. Existing credentials are preserved. **These accounts are for local synthetic-data use only.** KB ingestion makes billable embedding requests. For structured-only setup, use `POST /ingestion/structured`, then separately run `POST /ingestion/kb`.
 
-```dotenv
-OPENAI_API_KEY=YOUR_PROJECT_API_KEY
-INGESTION_TOKEN=YOUR_EXISTING_LOCAL_OPERATOR_TOKEN
-GENERATION_MODEL=gpt-6-luna
-```
+### 3. Start the frontend
 
-Keep the existing operator token when updating an existing deployment; changing
-it requires reconnecting browser/API clients. For a new deployment, generate a
-random token locally with `openssl rand -hex 32`. `gpt-6-luna` is the requested
-model identifier. Its availability and structured-output generation were verified
-with the configured project during local validation; access may differ for other
-projects. Check availability before generation and never silently substitute a
-different model. Embeddings use the separately configured
-`text-embedding-3-small` model.
-
-Apply the local configuration without printing secret values:
+From the repository root in another terminal:
 
 ```bash
-kubectl --context rancher-desktop create secret generic servewell-ingestion \
-  --from-env-file="$HOME/.config/serveiq/openai.env" --dry-run=client -o yaml \
-  | kubectl --context rancher-desktop apply -f -
-kubectl --context rancher-desktop rollout restart deployment/servewell-backend
-kubectl --context rancher-desktop rollout status deployment/servewell-backend
-```
-
-The Secret and deployment must use the same namespace. The current backend
-manifest reads the optional generation model from this Secret; rebuild/deploy
-manifest changes with Skaffold before relying on a new environment entry. Do not
-use `kubectl get secret -o yaml` to verify credentials: check only whether the
-required keys are present. Kubernetes Secrets are base64 encoded, not inherently
-encrypted at rest; Rancher Desktop remains a local POC environment.
-
-A key exported in a VS Code terminal does not automatically propagate to an
-already-running backend or a separate assistant tool process. For host runs,
-load this **trusted, locally edited** file in the same terminal before launch:
-
-```bash
-set -a
-. "$HOME/.config/serveiq/openai.env"
-set +a
-uv run --project microservices/backend servewell-api
-```
-
-Unit tests stay deterministic and credential-free. Live provider smoke tests are
-a separate, explicit integration check, not a replacement for unit tests. The
-approved smoke scope is at most **10 small synthetic API requests**, with no bulk
-indexing and no client tickets, client KB passages, labels, or other sensitive
-content sent to OpenAI. This request limit is not a hard dollar spending cap;
-configure provider-side budget controls as well. Real client-data processing
-requires a separate approved data-handling process.
-
-## Ingest through HTTP
-
-The image contains curated inputs at `/opt/dataset`, excluding evaluation labels.
-No macOS `hostPath`, CLI wrapper, ingestion sidecar, or arbitrary-path request is
-needed. `POST /api/ingestions` takes `{"target":"structured"}`, `"knowledge"`, or
-`"all"` and runs synchronously against server-configured inputs.
-
-For host development, set a local operator token before starting the API:
-
-```bash
-export INGESTION_TOKEN="$(openssl rand -hex 32)"
-uv run --project microservices/backend servewell-api
-```
-
-For Kubernetes, create the optional secret **before deploying**, using a local
-untracked environment file outside the build context:
-
-```bash
-kubectl --context rancher-desktop create secret generic servewell-ingestion \
-  --from-env-file=/absolute/path/to/local-ingestion.env --dry-run=client -o yaml \
-  | kubectl --context rancher-desktop apply -f -
-```
-
-The file contains `INGESTION_TOKEN=<random-local-token>` and, only for approved
-knowledge ingestion, `OPENAI_API_KEY=<provider-key>`. Never commit it. After a
-secret change, restart the backend deployment to refresh its environment.
-Keep the same operator token in the terminal issuing requests:
-
-```bash
-curl --fail-with-body http://127.0.0.1:8000/api/ingestions \
-  -H "Authorization: Bearer $INGESTION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"target":"structured"}'
-```
-
-Use `knowledge` to index KB Markdown with OpenAI `text-embedding-3-small`, or
-`all` to run both stages. Structured data/tickets and labels are not embedded.
-Missing OpenAI credentials block knowledge ingestion without affecting an
-explicitly selected structured import. A missing operator token disables the
-route (`503`), wrong credentials return `401`, invalid requests `422`, and an
-already-running ingestion `409`.
-
-A completed pipeline returns HTTP `200` with `status` (`succeeded`, `partial`,
-or `failed`) and independent stage reports. **Check the body, not just the HTTP
-status.** Structured data commits atomically in SQLite. Qdrant writes are not
-part of that transaction; partial vector writes can be reconciled by rerunning.
-No cleanup of stale chunks occurs after a failed replacement. Unchanged chunks
-skip embedding calls; changing the embedding identity requires a fresh compatible
-collection, not mixing embedding spaces.
-
-Repeat a structured request to verify unchanged rows are skipped. Reports include
-counts, warnings, and the explicit `tickets/raw` → `tickets/train` mapping.
-Ingestion is never an API restart side effect. The in-process ingestion lock is
-for the documented **one process/one replica** setup, not distributed execution.
-
-Imports own the source incident fields/history/relations; removed source children
-are reconciled transactionally. Seed imports refuse IDs owned by API-created
-incidents (`source_path IS NULL`) rather than overwriting runtime intake. Other
-seed updates remain source snapshots, not a merge policy for human-edited tickets.
-
-## Fresh incidents and context
-
-All routes below require the same local operator bearer token as ingestion.
-
-```bash
-curl --fail-with-body http://127.0.0.1:8000/api/incidents \
-  -H "Authorization: Bearer $INGESTION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"description":"Receipt printer is offline","category":"Printers","priority":"P2"}'
-```
-
-- `POST /api/incidents`: description required; optional reported store/asset IDs,
-  subject, category, priority, version and offset-aware history. Generates an ID
-  unless supplied; duplicates return `409`. New incidents start `Open`.
-- `GET /api/incidents?limit=25&offset=0`: bounded queue with total count; optional
-  exact `status` and `category` filters.
-- `GET /api/incidents/{ticket_id}`: persisted incident/history and warnings, or `404`.
-- `GET /api/incident-context/{ticket_id}`: exact store/asset/SLA/history/related
-  lookups, missing conditions and offset-aware clock targets. No model calls,
-  guessed IDs, contact columns or resolution-answer fields. Free-text reports
-  may still contain personal data; context is not comprehensive PII redaction.
-
-Missing IDs are accepted and preserved as missing; incompatible store/asset
-relationships remain unresolved. Context reads can resolve exact reported IDs
-against reference data that arrived later; persisted intake detail still reports
-its original resolution state. SLA target deadlines do not prove a response or
-resolution breach: fulfillment and actual escalation require additional evidence.
-
-## Cited knowledge search
-
-```bash
-curl --fail-with-body http://127.0.0.1:8000/api/knowledge/search \
-  -H "Authorization: Bearer $INGESTION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"receipt printer offline","category":"Printers","limit":5}'
-```
-
-Search uses the configured ingestion model/dimensions and rejects incompatible
-embedding spaces. Missing provider key/index returns an actionable `503`; a
-space mismatch returns `409`. Responses include bounded passages, source paths,
-sections, raw similarity scores and applicability notes. Scores are **not confidence**.
-Explicitly conflicting model/version/category metadata is filtered; generic or
-incompletely described guidance is marked applicability unknown. No aliases or
-version ranges are inferred. Empty results are an evidence gap, not generated
-instructions. Search does not resolve conflicting policy or authorize actions.
-
-Recognizable email/phone-like query fragments are redacted before embedding;
-this is not comprehensive PII protection. Provider-backed queries and KB uploads
-require approved content and a configured key. Rancher validation covers the
-proxy, persistence and concurrent API requests. Live provider checks use invented
-synthetic text only; real-corpus retrieval relevance remains unmeasured.
-
-## Support runs and reviewed policy configuration
-
-Start a run explicitly with `POST /api/incidents/{ticket_id}/runs`, an empty JSON
-body and an `Idempotency-Key` header. Reuse the same key after an uncertain
-response. Read persisted results at `GET /api/runs/{run_id}` and list incident
-runs at `GET /api/incidents/{ticket_id}/runs`. Proposals are read from
-`GET /api/runs/{run_id}/actions`; only an explicit decision at
-`POST /api/actions/{action_id}/decision` with `{"decision":"approve"}` or
-`{"decision":"reject"}` can resolve one. Audit history is separate from ticket
-source history: `GET /api/incidents/{ticket_id}/audit`.
-
-All require the operator token. Actions are SQLite-only simulations, never live
-ITSM writes, device operations or external contacts. The browser shows immutable
-previews and a second confirmation before submitting a decision.
-
-For host runs, `REVIEWED_POLICY_FILE` can point to a local JSON document containing
-`{"schema_version":1,"policies":[...]}`. Each policy must have reviewer/reference,
-validity dates, conflict disposition, exact reviewed report subject/description
-pairs, and exact source hashes/model/version applicability. The current pilot
-allows only observation-only instructions; privileged changes, unseen wording,
-contradictory context, or expired/missing review fail closed. These declarations
-are operator attestations, not cryptographic proof of independent review. Do not
-label the synthetic fixtures as client approvals.
-
-Once an actual policy has been reviewed, mount it in Rancher Desktop:
-
-```bash
-kubectl --context rancher-desktop create configmap servewell-reviewed-policy \
-  --from-file=reviewed-policy.json=/absolute/path/to/reviewed-policy.json \
-  --from-literal=REVIEWED_POLICY_FILE=/etc/servewell/policies/reviewed-policy.json \
-  --dry-run=client -o yaml | kubectl --context rancher-desktop apply -f -
-kubectl --context rancher-desktop rollout restart deployment/servewell-backend
-```
-
-Deploy the updated manifest first. Without this optional ConfigMap, the backend
-remains usable but does not offer unreviewed guidance. Knowledge indexing remains
-separate and must not send client content without an approved data-handling process.
-
-## State and lifecycle
-
-- SQLite: 1 GiB PVC, whole directory `/var/lib/servewell` (including WAL files).
-- Qdrant: existing 2 GiB `qdrant-pvc` at `/qdrant/storage`.
-- One replica and `Recreate` strategy per service avoid overlapping writers.
-- Inputs are read-only by convention in the image; edit local source inputs and
-  rebuild to change them. They are separate from persistent operational state.
-
-Stopping `skaffold dev` with `--cleanup=false` leaves deployments and PVCs in place.
-Pod replacement preserves PVC-backed data. **Deleting PVCs, using destructive
-Skaffold cleanup, or resetting Rancher Desktop can erase local state.** Do not run
-`skaffold delete` as a routine restart command. To pause the application without
-removing its state:
-
-```bash
-kubectl --context rancher-desktop scale deployment/servewell-backend deployment/qdrant --replicas=0
-```
-
-Run Skaffold again to resume. This setup is local-only, not a production identity,
-network isolation, backup, or high-availability design.
-
-## Troubleshooting
-
-```bash
-kubectl --context rancher-desktop get deployments,pods,pvc
-kubectl --context rancher-desktop logs deployment/servewell-backend
-kubectl --context rancher-desktop describe deployment servewell-backend
-```
-
-- **ImagePullBackOff:** confirm the Docker context, then build through Skaffold;
-  do not apply an unbuilt `servewell-backend:latest` deployment and expect a
-  registry image to exist.
-- **Readiness 503:** inspect backend logs, SQLite path and volume permissions.
-  `/api/health` remains independent of database readiness.
-- **Pending PVC:** verify Rancher Desktop's default local storage provisioner.
-- **Port already occupied:** stop the specific conflicting local forward or use
-  a different local port; do not kill processes by name.
-- **Qdrant has no collections:** run an authorized knowledge ingestion with an
-  approved OpenAI key. Inspect stage errors/blocked status; health readiness does
-  not check index contents. Local mocked tests do not require provider keys.
-
-## Vue development and tests
-
-The frontend depends on backend PR #18 or its merged equivalent. It uses the
-existing shared operator token, never a bundled default credential or browser
-storage. Refresh requires reconnecting. Run the backend at localhost:8000 (or
-forward its Service), then:
-
-```bash
-cd microservices/frontend
+cd phdata/microservices/frontend
 npm ci
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. Vite proxies `/api` locally; the containerized UI at
-localhost:8080 uses Nginx to proxy the same paths to FastAPI. Knowledge imports
-require explicit transfer confirmation; provider keys remain server-side.
+Open <http://localhost:5173>, sign in with a provisioned manager, and create an incident. Vite proxies `/api` to the backend; provider and ingestion keys remain server-side. The UI supports login, not self-service registration; API registration alone does not assign manager stores.
+
+## API overview
+
+| Area | Routes | Access |
+| --- | --- | --- |
+| Health | `GET /health` | Public; process health only |
+| Accounts | `/users/register`, `/users/login`, `/users/me`, `GET /users` | Register/login public; remaining routes bearer-authenticated |
+| Conversations | `/incidents`, `/incidents/{id}/messages`, `/messages/{id}/events` | Bearer token; owner-scoped |
+| Agent | `GET /llm/models`, `POST /llm/stream` | Bearer token; incident ownership checked |
+| Reference data | `/data/me`, `/data/stores`, `/data/assets`, `/data/sla`, `/data/system-versions`, `/data/tickets` | Bearer token; store/assets/history scoped to manager |
+| Knowledge | `GET /kb/search` | Bearer token |
+| L2 handoffs | `/escalations`, `/escalations/stats`, `/escalations/{id}` | Bearer token; owner-scoped |
+| Ingestion | `/ingestion/*` | `X-Ingestion-Key` |
+| Evaluation | `/evaluations/*` | `X-Ingestion-Key` |
+
+`GET /users` exposes an authenticated directory of user IDs/emails, not password hashes. See the [backend guide](phdata/microservices/backend/README.md) and running OpenAPI docs for payloads and pagination.
+
+## Rancher Desktop deployment
+
+Prerequisites: Rancher Desktop with Kubernetes enabled, the `rancher-desktop` context, a Docker-compatible image builder, kubectl, Skaffold supporting `skaffold/v4beta11`, and a default dynamic storage provisioner. Locally built images are not pushed; the Kubernetes runtime must be able to access them.
+
+An administrator must first provision a Kubernetes Secret named `phdata-backend-secrets` in the deployment namespace:
+
+| Secret key | Purpose |
+| --- | --- |
+| `JWT_SECRET` | Required at startup; at least 32 characters |
+| `OPENAI_API_KEY` | Optional at startup; required for agent calls and embeddings |
+| `INGESTION_API_KEY` | Optional at startup; required for ingestion and evaluations |
+
+Use your organization's secret-management workflow. No real credentials or Secret manifest are included. Restart the backend after changing injected Secret values. All resources and the Secret must use the same namespace.
+
+From the repository root:
 
 ```bash
-npm test
-npm run build
+skaffold dev --port-forward
 ```
 
-See the [frontend guide](microservices/frontend/README.md) for screen scope,
-auth limitations and manual Rancher checks. Frontend tests use mocked boundaries;
-no live-provider or cluster verification is implied.
+Use `skaffold run --port-forward` for a one-off deployment instead. Frontend: <http://localhost:5173>; API: <http://localhost:8000/docs>; Qdrant: <http://localhost:6333>. Nginx proxies browser `/api` requests to `http://phdata-backend:8000`; the backend uses `http://phdata-qdrant:6333`. Run ingestion after first deployment; packaging the dataset does not ingest it automatically.
 
-## Python development and tests
+### Persistence and boundaries
 
-```bash
-uv sync
-uv run --project microservices/backend servewell-api
-uv run --project microservices/backend pytest microservices/backend/tests -q
-```
+- Backend: one replica, `Recreate`, SQLite at `/app/data/phdata.db`, 1 GiB `ReadWriteOnce` claim `phdata-backend-data`.
+- Qdrant: one replica, `Recreate`, vectors at `/qdrant/storage`, separate 1 GiB claim `phdata-qdrant-data`.
+- Skaffold's pre-deploy hook applies PVCs outside its cleanup-managed manifest list, so normal Skaffold cleanup is intended to retain them. Manual claim deletion or cluster reset can still destroy data. Back up both stores before teardown.
+- Do not scale the backend or enable autoscaling: SQLite and filesystem run locks are not distributed coordination.
+- Qdrant has no API key configured; keep it local/private. Backend TCP readiness and `/health` do not verify the provider or retrieval pipeline.
+- Production use needs credential hardening (including demo accounts), TLS, managed secrets, backups, and a shared database/coordination design before scaling.
 
-Live tests are disabled by default. To explicitly authorize **two paid synthetic
-requests** (one embedding and one structured recommendation) using the trusted
-local configuration file:
+## Validation and troubleshooting
 
-```bash
-set -a
-. "$HOME/.config/serveiq/openai.env"
-set +a
-SERVEIQ_LIVE_OPENAI=1 uv run --project microservices/backend pytest \
-  microservices/backend/tests/test_live_openai.py -q
-```
+See [backend tests and evaluation](phdata/microservices/backend/README.md#testing-and-evaluation) and [frontend validation](phdata/microservices/frontend/README.md#validation).
 
-The live tests never open the client dataset. They do not retry provider calls.
-The normal backend suite additionally executes 13 synthetic cases through the
-actual workflow/persistence with deterministic provider doubles, including
-contradictions, source changes and failures; these are not real-ticket metrics.
-
-[CI](.github/workflows/validate.yml) validates backend tests/wheel, frontend
-tests/build and both container builds without provider credentials on PRs and
-main pushes. It has been validated locally; no remote run or required-check rule
-exists until the workflow is published and repository settings are configured.
-
-See the [backend README](microservices/backend/README.md) for the package layout,
-configuration, and HTTP ingestion examples. Keep secrets in local environment/secret stores,
-not in source, build contexts, or browser code.
+| Symptom | Check |
+| --- | --- |
+| Backend fails at startup | `JWT_SECRET` length and backend working directory |
+| UI cannot reach API | Backend port 8000; Vite proxy locally or Nginx service DNS in Kubernetes |
+| Empty manager workspace | Structured ingestion completed; use a provisioned manager account |
+| Ingestion/evaluation returns 503 | Backend ingestion key configured; dataset path exists |
+| Ingestion returns 401 | Shell header value matches backend ingestion key |
+| KB ingestion/search fails | OpenAI key, embedding access, Qdrant connectivity, collection dimensions |
+| Stream fails or stops | Allowed model/access, credentials, run limits; refresh durable history before retrying |

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phdata-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phdata-frontend
+  template:
+    metadata:
+      labels:
+        app: phdata-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: phdata-frontend
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phdata-frontend
+spec:
+  selector:
+    app: phdata-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

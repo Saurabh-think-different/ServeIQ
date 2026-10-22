@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phdata-backend
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: phdata-backend
+  template:
+    metadata:
+      labels:
+        app: phdata-backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: backend
+          image: phdata-backend
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: sqlite:////app/data/phdata.db
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: phdata-backend-secrets
+                  key: JWT_SECRET
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: phdata-backend-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: LLM_MODEL
+              value: gpt-6.1-sol
+            - name: ALLOWED_MODELS
+              value: gpt-6.1-sol,gpt-6-luna,gpt-5.4-mini,gpt-4.1
+            - name: DATASET_ROOT
+              value: /app/client_data
+            - name: QDRANT_URL
+              value: http://phdata-qdrant:6333
+            - name: INGESTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: phdata-backend-secrets
+                  key: INGESTION_API_KEY
+                  optional: true
+            - name: EMBEDDING_MODEL
+              value: text-embedding-3-small
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: phdata-backend-data

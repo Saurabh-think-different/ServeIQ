@@ -1,53 +1,55 @@
 apiVersion: skaffold/v4beta11
 kind: Config
 metadata:
-  name: servewell-ai
-
+  name: phdata
 build:
   local:
     push: false
-    # Use the active Docker CLI context (rancher-desktop), sharing the cluster's image store.
-    useDockerCLI: true
   artifacts:
-    - image: servewell-backend
+    - image: phdata-backend
       context: .
       docker:
-        dockerfile: microservices/backend/Dockerfile
-    - image: servewell-frontend
-      context: microservices/frontend
+        dockerfile: phdata/microservices/backend/Dockerfile
+    - image: phdata-frontend
+      context: phdata/microservices/frontend
       docker:
         dockerfile: Dockerfile
-
+    - image: phdata-qdrant
+      context: phdata/microservices/qdrant
+      docker:
+        dockerfile: Dockerfile
 manifests:
   rawYaml:
-    - microservices/qdrant/k8s.yaml
-    - microservices/backend/k8s.yaml
-    - microservices/frontend/k8s.yaml
-
+    - phdata/deploy/backend.yaml
+    - phdata/deploy/backend-service.yaml
+    - phdata/deploy/frontend.yaml
+    - phdata/deploy/qdrant.yaml
 deploy:
   kubeContext: rancher-desktop
-  kubectl: {}
-
+  kubectl:
+    hooks:
+      before:
+        - host:
+            # Keep data claims outside Skaffold's cleanup-managed manifests.
+            command:
+              - kubectl
+              - --context
+              - rancher-desktop
+              - apply
+              - -f
+              - phdata/deploy/backend-pvc.yaml
+              - -f
+              - phdata/deploy/qdrant-pvc.yaml
 portForward:
   - resourceType: service
-    resourceName: servewell-frontend
-    port: 8080
-    localPort: 8080
-    address: 127.0.0.1
+    resourceName: phdata-frontend
+    port: 80
+    localPort: 5173
   - resourceType: service
-    resourceName: servewell-backend
+    resourceName: phdata-qdrant
+    port: 6333
+    localPort: 6333
+  - resourceType: service
+    resourceName: phdata-backend
     port: 8000
     localPort: 8000
-    address: 127.0.0.1
-
-profiles:
-  - name: qdrant-port-forward
-    patches:
-      - op: add
-        path: /portForward/-
-        value:
-          resourceType: service
-          resourceName: qdrant
-          port: 6333
-          localPort: 6333
-          address: 127.0.0.1
