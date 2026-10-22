@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from phdata.models.legacy import LegacyRunResult
+
 
 def evidence_id_for(source_path: str, section: str, content_sha256: str) -> str:
     """Create a stable run-local ID from immutable source identity and content hash."""
@@ -115,8 +117,11 @@ class RunResult(RunModel):
         return self
 
 
+RunReadResult = RunResult | LegacyRunResult
+
+
 class RunPage(RunModel):
-    runs: list[RunResult] = Field(max_length=100)
+    runs: list[RunReadResult] = Field(max_length=100)
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)

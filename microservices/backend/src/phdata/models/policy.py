@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 
 class PolicyModel(BaseModel):
@@ -46,12 +46,37 @@ class ReviewedPolicyStep(PolicyModel):
         return self
 
 
+class ApprovedReport(PolicyModel):
+    """Exact report wording reviewed for applicability, not a keyword classifier."""
+
+    subject: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    description: Annotated[str, StringConstraints(min_length=1, max_length=10000)]
+
+
+class PolicyReview(PolicyModel):
+    reviewed_by: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    approval_reference: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    reviewed_at: AwareDatetime
+    expires_at: AwareDatetime
+    scope: Literal["non_disruptive_observation_only"]
+    conflict_check: Literal["no_unresolved_conflicts_for_selected_steps"]
+    applicability_rationale: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    approved_reports: list[ApprovedReport] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def review_window_is_valid(self) -> "PolicyReview":
+        if self.expires_at <= self.reviewed_at:
+            raise ValueError("review expiry must follow review time")
+        return self
+
+
 class ReviewedPolicy(PolicyModel):
     policy_id: PolicyId
     policy_version: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
     category: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     symptom_scope: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
     steps: list[ReviewedPolicyStep] = Field(min_length=1, max_length=50)
+    review: PolicyReview | None = None
 
     @field_validator("steps")
     @classmethod

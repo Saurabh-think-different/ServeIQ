@@ -163,13 +163,20 @@ transactionally without deleting existing rows. Startup marks orphaned `running`
 records as failed/interrupted once; it never replays model work.
 
 OpenAI generation was approved with the server-selected model identifier
-`gpt-6-luna` and bounded runtime text sharing, but the model has not been live
-verified. `GENERATION_MODEL` has no default and must be configured server-side;
+`gpt-6-luna`; model availability and production-adapter structured output have
+been live verified with invented synthetic text only. `GENERATION_MODEL` has no
+default and must be configured server-side;
 client requests cannot override it. The adapter uses a bounded timeout and zero
 SDK retries. No production guidance sections are approved or loaded, so current
 runs never invoke generation: they ask for missing facts or escalate instead of
-inventing troubleshooting steps. If reviewed policy is added later, the provider
-input is limited to verified device metadata, reviewed candidate instructions,
+inventing troubleshooting steps. Explicit policies can now be loaded from
+`REVIEWED_POLICY_FILE` (the optional Rancher ConfigMap mount is described in the
+root README). Files are bounded and require review provenance, expiry, exact
+approved report wording and observation-only instructions; missing/contradictory
+facts or unreviewed text fail closed. These are declared approvals, not verified
+reviewer identities. No supplied client KB conflicts have been approved away.
+For an applicable policy, provider input is limited to verified device metadata,
+reviewed candidate instructions,
 and exact cited source snippets; free-text descriptions, history, contacts, and
 serial numbers are excluded. Intake, context, deterministic runs, reads,
 decisions, and tests require no generation model or provider call. Similarity is
@@ -177,15 +184,20 @@ not confidence, and the local simulation is not a real handoff.
 
 ## Pilot evaluation status
 
-A development census of the current dataset found 256 training tickets and 220
-labels; the exact `Printers / Printer Offline or Not Detected` subset has 15
-tickets and 13 labels. These inspected labels are development data, not a held-out
-set; the two unlabeled cases receive no invented expected outcome. The synthetic
-pytest evaluator covers eight behavior scenarios (seven pilot-eligible), but it
-is a contract check, not a model-quality score. Routing agreement on the dataset,
-escalation misses against labels, semantic grounding review, live latency/model
-usage, and ROI have not been measured. No live OpenAI or Rancher Desktop checks
-were performed for this implementation batch.
+A development census found 256 training tickets and 220 labels. The printer pilot
+is the union of 11 `Not Detected` and four `Printer Offline` cases: 15 tickets and
+13 labels, not a literal combined subcategory. These inspected labels are development
+data, not a held-out set; the two unlabeled cases receive no invented outcome.
+
+The evaluator now executes the actual workflow/persistence for 13 synthetic
+scenarios (12 pilot-eligible; 11 with expected routing, two expected failures),
+including contradictions, ambiguous reports, changed evidence and provider failures.
+This is a contract/guardrail evaluation with deterministic provider doubles, not
+a model-quality score. Separate opt-in live tests verify embeddings and structured
+output using invented text. Isolated Rancher tests cover 30 concurrent reads,
+persistence and the run/proposal/decision APIs. Real-dataset routing agreement,
+semantic relevance, measured business savings and production readiness are not
+established by these results.
 
 ## Test
 
@@ -242,7 +254,10 @@ under `src/`. Retaining this package name preserves the API entrypoint and impor
 
 Add additional layers only with concrete behavior. No plugin registry, abstract
 factory hierarchy, background worker, or generic `core/utils` scaffolding is
-needed. Support workflows and approval-gated actions remain future work.
+needed. `services/` owns support workflows and approval-gated local simulations;
+`repositories/` owns persistence, and `models/` owns typed contracts. Legacy v1
+run/audit payloads remain readable as explicitly untyped historical representations,
+without inventing modern outcomes or making old records approvable.
 
 API references were fetched through Context Hub for pandas, Pydantic, FastAPI,
 OpenAI and qdrant-client. Indexing/querying must use the same embedding model and

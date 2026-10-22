@@ -44,6 +44,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     _configure_connection(connection)
     try:
         connection.execute("BEGIN IMMEDIATE")
+        # Another connection may have migrated while this one waited for the lock.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version > SCHEMA_VERSION:
+            raise sqlite3.OperationalError(
+                f"database schema version {current_version} is newer than supported version {SCHEMA_VERSION}"
+            )
         if current_version == 0:
             _execute_sql_script(connection, SCHEMA_SQL)
             _execute_sql_script(connection, MIGRATION_002_SQL)
@@ -58,8 +64,13 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
 
 
 def open_database(database_path: str | Path) -> sqlite3.Connection:
-    """Open a SQLite database and initialize the current schema."""
-    connection = sqlite3.connect(database_path)
+    """Open an independently owned connection and initialize the current schema.
+
+    FastAPI may run dependency setup, a handler, and cleanup on different worker
+    threads. Callers must retain exclusive ownership, never use the connection
+    concurrently, and close it when their request or unit of work finishes.
+    """
+    connection = sqlite3.connect(database_path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     try:
         initialize_schema(connection)

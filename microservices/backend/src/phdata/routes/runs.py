@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 
 from phdata.auth import operator_settings
 from phdata.config import Settings
-from phdata.models.runs import RunPage, RunRequest, RunResult
+from phdata.models.runs import RunPage, RunReadResult, RunRequest, RunResult
 from phdata.repositories import incidents, runs
 from phdata.repositories.runs import RunStateConflict
 from phdata.routes.incidents import Database
@@ -62,8 +62,8 @@ def start_incident_run(
     return result
 
 
-@router.get("/runs/{run_id}", response_model=RunResult, name="get_run")
-def get_run(run_id: str, workflow: Workflow, _database: Database) -> RunResult:
+@router.get("/runs/{run_id}", response_model=RunReadResult, name="get_run")
+def get_run(run_id: str, workflow: Workflow, _database: Database) -> RunReadResult:
     try:
         result = workflow.get_run(run_id)
     except (sqlite3.Error, OSError, ValueError):

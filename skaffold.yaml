@@ -13,17 +13,27 @@ build:
       context: .
       docker:
         dockerfile: microservices/backend/Dockerfile
+    - image: servewell-frontend
+      context: microservices/frontend
+      docker:
+        dockerfile: Dockerfile
 
 manifests:
   rawYaml:
     - microservices/qdrant/k8s.yaml
     - microservices/backend/k8s.yaml
+    - microservices/frontend/k8s.yaml
 
 deploy:
   kubeContext: rancher-desktop
   kubectl: {}
 
 portForward:
+  - resourceType: service
+    resourceName: servewell-frontend
+    port: 8080
+    localPort: 8080
+    address: 127.0.0.1
   - resourceType: service
     resourceName: servewell-backend
     port: 8000

@@ -17,6 +17,7 @@ class EvaluationExpectation:
     expected_routing: RoutingOutcome | None
     expected_action: ActionDecision | None = None
     expected_replay: bool | None = None
+    expected_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class EvaluationReport:
     uncited_guided_cases: tuple[str, ...]
     action_mismatches: tuple[str, ...]
     replay_mismatches: tuple[str, ...]
+    failure_mismatches: tuple[str, ...]
 
     @property
     def routing_agreement(self) -> float | None:
@@ -50,9 +52,15 @@ def evaluate(observations: list[EvaluationObservation]) -> EvaluationReport:
     uncited_guidance = []
     action_mismatches = []
     replay_mismatches = []
+    failure_mismatches = []
 
     for item in observations:
         expected = item.expectation.expected_routing
+        expected_error = item.expectation.expected_error
+        if expected_error is not None and (
+            item.run.status != "failed" or item.run.error_code != expected_error
+        ):
+            failure_mismatches.append(item.expectation.case_id)
         actual = item.run.routing_outcome if item.run.status == "completed" else None
         if expected is not None and expected == actual:
             matches += 1
@@ -81,4 +89,5 @@ def evaluate(observations: list[EvaluationObservation]) -> EvaluationReport:
         uncited_guided_cases=tuple(uncited_guidance),
         action_mismatches=tuple(action_mismatches),
         replay_mismatches=tuple(replay_mismatches),
+        failure_mismatches=tuple(failure_mismatches),
     )

@@ -22,6 +22,7 @@ class Settings:
     qdrant_collection: str = "servewell-kb"
     generation_model: str | None = None
     generation_timeout_seconds: float = 20.0
+    reviewed_policy_file: Path | None = None
 
 
 def _generation_timeout_seconds() -> float:
@@ -60,4 +61,7 @@ def get_settings() -> Settings:
         qdrant_collection=os.getenv("QDRANT_COLLECTION", "servewell-kb"),
         generation_model=os.getenv("GENERATION_MODEL", "").strip() or None,
         generation_timeout_seconds=_generation_timeout_seconds(),
+        reviewed_policy_file=(
+            Path(value) if (value := os.getenv("REVIEWED_POLICY_FILE", "").strip()) else None
+        ),
     )

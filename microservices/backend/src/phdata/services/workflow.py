@@ -25,6 +25,7 @@ from phdata.models.retrieval import SearchRequest, SearchResponse
 from phdata.models.runs import (
     EvidenceSnapshot,
     RunQuestion,
+    RunReadResult,
     RunResult,
     ReviewedStep,
     evidence_id_for,
@@ -39,7 +40,13 @@ from phdata.repositories.runs import (
     list_runs,
 )
 from phdata.repositories.support import SupportRepository
-from phdata.services.policy import reviewed_source_matches
+from phdata.services.policy import (
+    PolicyConfigurationError,
+    load_reviewed_policies,
+    policy_applies_to_report,
+    policy_provenance,
+    reviewed_source_matches,
+)
 from phdata.services.recommendations import RecommendationError
 from phdata.services.retrieval import KnowledgeRetrieval, RetrievalError
 
@@ -72,14 +79,14 @@ class SupportWorkflow:
         *,
         retrieval: RetrievalPort | None = None,
         recommender: RecommenderPort | None = None,
-        policies: Sequence[ReviewedPolicy] = (),
+        policies: Sequence[ReviewedPolicy] | None = None,
         connection_factory: Callable[[], sqlite3.Connection] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
         self.retrieval = retrieval or KnowledgeRetrieval(settings)
         self.recommender = recommender
-        self.policies = tuple(policies)
+        self.policies = tuple(policies) if policies is not None else None
         self.connection_factory = connection_factory or self._open_database
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -93,7 +100,7 @@ class SupportWorkflow:
             raise ValueError("workflow clock must return a timezone-aware datetime")
         return value.astimezone(timezone.utc)
 
-    def get_run(self, run_id: str) -> RunResult | None:
+    def get_run(self, run_id: str) -> RunReadResult | None:
         connection = self.connection_factory()
         try:
             return get_run(connection, run_id)
@@ -183,6 +190,8 @@ class SupportWorkflow:
                 else ("knowledge_unavailable", "Knowledge search is temporarily unavailable.")
             )
             result = self._failure(run, code, message)
+        except PolicyConfigurationError:
+            result = self._failure(run, "policy_configuration_invalid", "Reviewed support policy configuration is invalid.")
         except RecommendationError as error:
             result = self._failure(run, error.error_code, error.safe_message)
         except Exception:
@@ -212,15 +221,16 @@ class SupportWorkflow:
                 warnings=context.warnings,
             )
 
+        policies = self.policies if self.policies is not None else load_reviewed_policies(self.settings.reviewed_policy_file)
         matching = [
-            policy for policy in self.policies
+            policy for policy in policies
             if _same(incident.category, policy.category)
             and _same(incident.subcategory, policy.symptom_scope)
         ]
         if len(matching) != 1:
             reason = (
                 "No reviewed support policy is configured for this pilot."
-                if not self.policies
+                if not policies
                 else "No unique reviewed policy matches the exact reported category and symptom."
             )
             return self._completed(
@@ -232,6 +242,14 @@ class SupportWorkflow:
             )
 
         policy = matching[0]
+        if not policy_applies_to_report(policy, context, now=self._now()):
+            return self._completed(
+                run,
+                "l2_escalation",
+                requester="The report needs human applicability review. No troubleshooting guidance was selected.",
+                ticket="The report or context is outside the current, explicitly reviewed observation-only pilot scope.",
+                warnings=["Policy applicability is unverified; category labels alone cannot authorize guidance.", *context.warnings],
+            )
         candidates, questions = _applicable_steps(policy.steps, context)
         if questions:
             return self._completed(
@@ -262,7 +280,12 @@ class SupportWorkflow:
         search = self.retrieval.search(_search_request(policy, context))
         evidence_by_id: dict[str, EvidenceSnapshot] = {}
         steps: list[ReviewedStep] = []
-        warnings = list(context.warnings) + list(search.warnings)
+        warnings = [
+            policy_provenance(policy),
+            f"Operator-declared review by {policy.review.reviewed_by}; approval reference: {policy.review.approval_reference}.",
+            *context.warnings,
+            *search.warnings,
+        ]
         for step in candidates:
             evidence_ids = []
             for passage in search.passages:
@@ -567,6 +590,8 @@ def _passage_applies(passage, step: ReviewedPolicyStep, context: IncidentContext
     ):
         return False
     asset = context.asset
+    if passage.category is None or not _same(passage.category, step.category):
+        return False
     if passage.model and (asset is None or passage.model != asset.model):
         return False
     if passage.system_version and (asset is None or passage.system_version != asset.system_version):
@@ -606,6 +631,7 @@ def recover_interrupted_runs(
         raise ValueError("recovery timestamp must be timezone-aware")
     rows = connection.execute(
         "SELECT run_id, ticket_id, started_at FROM agent_runs WHERE status = 'running' "
+        "AND idempotency_key IS NOT NULL AND request_fingerprint IS NOT NULL "
         "ORDER BY started_at, run_id",
     ).fetchall()
     for row in rows:

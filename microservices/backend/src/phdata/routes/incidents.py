@@ -18,6 +18,7 @@ router = APIRouter(tags=["incidents"])
 def incident_database(
     settings: Annotated[Settings, Depends(operator_settings)],
 ) -> Iterator[sqlite3.Connection]:
+    """Own one connection for this request, including rollback-on-close cleanup."""
     connection = None
     try:
         settings.database_path.parent.mkdir(parents=True, exist_ok=True)

@@ -6,8 +6,14 @@ dist/
 wheels/
 *.egg-info
 
+# Local credentials and environment files
+.env
+.env.*
+*.env
+
 # Virtual environments
 .venv
 .local/
 .DS_Store
 .client_data/.DS_Store
+*.md

@@ -5,7 +5,8 @@ import re
 import sqlite3
 from typing import Any
 
-from phdata.models.runs import RunPage, RunResult
+from phdata.models.legacy import LegacyRunResult
+from phdata.models.runs import RunPage, RunReadResult, RunResult
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -45,14 +46,19 @@ def insert_run(
     return result
 
 
-def get_run(connection: sqlite3.Connection, run_id: str) -> RunResult | None:
+def get_run(connection: sqlite3.Connection, run_id: str) -> RunReadResult | None:
+    """Read untracked v1 rows as history; v2 snapshots still require validation."""
     row = connection.execute(
-        "SELECT run_id, ticket_id, status, started_at, completed_at, response_json "
-        "FROM agent_runs WHERE run_id = ?",
-        (run_id,),
+        "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,),
     ).fetchone()
     if row is None:
         return None
+    if all(row[column] is None for column in (
+        "idempotency_key", "request_fingerprint", "context_fingerprint", "context_snapshot_json", "error_code",
+    )):
+        return LegacyRunResult(**{
+            field: row[field] for field in LegacyRunResult.model_fields if field != "representation"
+        })
     if row["response_json"] is None:
         raise ValueError("stored run does not contain a typed response snapshot")
     return RunResult.model_validate_json(row["response_json"])
@@ -74,6 +80,8 @@ def find_run_by_idempotency_key(
     result = get_run(connection, row["run_id"])
     if result is None:
         return None
+    if not isinstance(result, RunResult):
+        raise ValueError("legacy runs cannot be replayed as typed results")
     fingerprint = row["request_fingerprint"]
     if not isinstance(fingerprint, str) or not _SHA256.fullmatch(fingerprint):
         raise ValueError("stored request fingerprint is invalid")
@@ -100,8 +108,8 @@ def finalize_run(
     context_snapshot_json: str,
 ) -> None:
     """Persist a typed terminal result without committing the caller's transaction."""
-    if result.status == "running" or result.completed_at is None:
-        raise ValueError("finalize_run requires a completed or failed result")
+    if not isinstance(result, RunResult) or result.status == "running" or result.completed_at is None:
+        raise ValueError("finalize_run requires a completed or failed typed result")
     if not _SHA256.fullmatch(context_fingerprint):
         raise ValueError("context_fingerprint must be a lowercase SHA-256 hash")
     snapshot: Any = json.loads(context_snapshot_json)

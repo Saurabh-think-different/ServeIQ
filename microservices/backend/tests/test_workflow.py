@@ -63,6 +63,19 @@ def make_policy(*, content=CONTENT, applicability="exact"):
         "policy_version": "reviewed-v1",
         "category": "Printers",
         "symptom_scope": "Printer Offline or Not Detected",
+        "review": {
+            "reviewed_by": "synthetic-test-reviewer",
+            "approval_reference": "synthetic-only-not-client-approval",
+            "reviewed_at": "2026-10-19T00:00:00Z",
+            "expires_at": "2026-11-19T00:00:00Z",
+            "scope": "non_disruptive_observation_only",
+            "conflict_check": "no_unresolved_conflicts_for_selected_steps",
+            "applicability_rationale": "Synthetic fixture only; no client source approval.",
+            "approved_reports": [{
+                "subject": "Printer offline",
+                "description": "Receipt printer is not detected.",
+            }],
+        },
         "steps": [{
             "step_id": "printer.power-indicator",
             "policy_id": "printer-offline-policy",

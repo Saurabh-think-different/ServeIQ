@@ -5,6 +5,7 @@ import sqlite3
 from hashlib import sha256
 from typing import Any
 
+from phdata.models.legacy import LegacyAuditEvent
 from phdata.models.actions import (
     ActionDecisionResult,
     ActionProposal,
@@ -198,9 +199,18 @@ def list_audit_events(
         "ORDER BY occurred_at ASC, audit_event_id ASC LIMIT ? OFFSET ?",
         (ticket_id, limit, offset),
     ).fetchall()
-    events = []
+    events: list[AuditEvent | LegacyAuditEvent] = []
     for row in rows:
-        payload = AuditPayload.model_validate_json(row["payload_json"])
+        stored_payload = json.loads(row["payload_json"])
+        # v1 payloads had no versioned contract; never reinterpret them as actions.
+        if not isinstance(stored_payload, dict) or "version" not in stored_payload:
+            events.append(LegacyAuditEvent(
+                **{field: row[field] for field in LegacyAuditEvent.model_fields
+                   if field not in {"representation", "payload"}},
+                payload=stored_payload,
+            ))
+            continue
+        payload = AuditPayload.model_validate(stored_payload)
         events.append(AuditEvent(
             audit_event_id=row["audit_event_id"],
             ticket_id=row["ticket_id"],

@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from phdata.models.legacy import LegacyAuditEvent
+
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 ActionType = Literal["simulate_post_comment", "simulate_escalation"]
@@ -109,7 +111,7 @@ class AuditEvent(ActionModel):
 
 
 class AuditPage(ActionModel):
-    events: list[AuditEvent] = Field(max_length=100)
+    events: list[AuditEvent | LegacyAuditEvent] = Field(max_length=100)
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=100)
     offset: int = Field(ge=0)
