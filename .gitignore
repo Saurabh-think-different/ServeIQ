@@ -20,3 +20,4 @@ wheels/
 *.db
 *.png
 *node_modules/
+*.pytest-work/*
