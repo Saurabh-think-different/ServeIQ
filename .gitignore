@@ -17,3 +17,6 @@ wheels/
 .DS_Store
 .client_data/.DS_Store
 *.md
+*.db
+*.png
+*node_modules/

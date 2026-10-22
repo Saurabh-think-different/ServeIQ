@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phdata-qdrant
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: phdata-qdrant
+  template:
+    metadata:
+      labels:
+        app: phdata-qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: phdata-qdrant
+          command: ["/qdrant/qdrant"]
+          args: ["--config-path", "/qdrant/config/local.yaml"]
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: phdata-qdrant-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phdata-qdrant
+spec:
+  selector:
+    app: phdata-qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: http
+    - name: grpc
+      port: 6334
+      targetPort: grpc

@@ -1,0 +1,6 @@
+# Local vector store deployed by Skaffold; ingestion/retrieval is not implemented.
+storage:
+  storage_path: /qdrant/storage
+service:
+  http_port: 6333
+  grpc_port: 6334

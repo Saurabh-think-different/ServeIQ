@@ -1,32 +1,55 @@
 # ServeWell IT Support — Synthetic Dataset
 
-Synthetic data package for the **phData Applied AI Solutions Architect** project challenge. Candidates build an agentic IT support triage system for ServeWell Hospitality, a fictional multi-brand QSR chain.
+Synthetic data package for the **phData Applied AI Solutions Architect** project challenge. ServeIQ uses it for agentic IT support triage for ServeWell Hospitality, a fictional multi-brand QSR chain.
+
+[Project overview](../README.md) · [Backend ingestion and retrieval](../phdata/microservices/backend/README.md#ingestion-and-retrieval)
+
+## Application data flow
+
+```mermaid
+flowchart LR
+    CSV[Stores, assets, SLAs, and versions] --> Structured[Structured ingestion]
+    Tickets[Training ticket JSON] --> Structured
+    Structured --> DB[(SQLite reference data and conversations)]
+    Markdown[KB Markdown] --> Chunk[Parent and child chunking]
+    Chunk --> Source[(SQLite KB content)]
+    Chunk --> Embed[OpenAI embeddings]
+    Embed --> Qdrant[(Qdrant vector index)]
+    DB --> Agent[Manager-scoped support tools]
+    Source --> Retrieval[Grounded KB retrieval]
+    Qdrant --> Retrieval
+    Retrieval --> Agent
+    Labels[Training labels] --> Evaluation[Privileged evaluation runs]
+    Tickets --> Evaluation
+```
+
+Runtime ingestion is explicit: `POST /ingestion/structured` loads reference data and training tickets; `POST /ingestion/kb` indexes Markdown; `POST /ingestion/all` runs both stages. These endpoints require `X-Ingestion-Key`; KB indexing also requires OpenAI credentials and Qdrant. See the [setup guide](../README.md#local-development).
+
+Training labels are evaluation ground truth, not runtime retrieval evidence. Structured ingestion provisions missing demo manager accounts, assigns stores, and imports historical incidents. Existing credentials and conversations are preserved on repeat ingestion.
 
 ---
 
 ## What's In This Package
 
+```text
+client_data/
+├── data/
+│   ├── stores.csv         120 India store locations (franchise + corporate)
+│   ├── assets.csv         477 IT assets
+│   └── sla_matrix.csv     28 priority/category SLA rows
+├── kb/                    48 Markdown documents total
+│   ├── runbooks/          32 issue-specific runbooks
+│   ├── faq/               6 category FAQs
+│   ├── sop/               3 escalation/shift procedures
+│   └── system-specs/      7 spec sheets + version-matrix.csv (21 version rows)
+├── tickets/
+│   ├── train/             256 ticket JSON files
+│   └── train_index.csv    256 training index entries
+└── labels/
+    └── train_labels.json  Ground-truth training labels
 ```
-data/
-  stores.csv              120 India store locations (franchise + corporate)
-  assets.csv              ~480 IT assets (POS, routers, printers, soft serve, kiosks)
-  sla_matrix.csv          Priority × category SLA targets
 
-kb/
-  runbooks/               ~30 markdown runbooks (one per issue type)
-  faq/                    6 category FAQs (10-15 Q&A each)
-  sop/                    3 SOPs (escalation, shift-start, shift-end)
-  system-specs/           8 system spec sheets + version-matrix.csv
-
-tickets/
-  raw/                    All ticket JSON files (INC-NNNNN.json)
-  train/                  Training set ticket files
-  train_index.csv         Training set index (~256 tickets)
-
-labels/
-  train_labels.json       Ground truth labels for train tickets
-
-```
+Counts describe the current checkout. There is no `tickets/raw/` directory in this package. The index retains original `raw/INC-NNNNN.json` filenames; resolve each basename under [tickets/train/](tickets/train/) instead. The backend structured importer reads that directory directly.
 
 ---
 
@@ -81,29 +104,30 @@ Each `INC-NNNNN.json` file contains a rich ITSM ticket:
 
 ## Loading the Data
 
+For application setup, use the [backend ingestion APIs](../phdata/microservices/backend/README.md#ingestion-and-retrieval). For standalone exploration, run this example from the repository root. It reads local files only; it does not provision accounts or create a vector index.
+
 ```python
-import json, csv
+import csv
+import json
 from pathlib import Path
 
-ROOT = Path(".")   # adjust as needed
+ROOT = Path("client_data")
 
-# Load all train tickets
 train_tickets = []
-with open(ROOT / "tickets/train_index.csv") as f:
-    for row in csv.DictReader(f):
-        with open(ROOT / "tickets" / row["filename"]) as tf:
-            train_tickets.append(json.load(tf))
+with (ROOT / "tickets/train_index.csv").open(encoding="utf-8", newline="") as index_file:
+    for row in csv.DictReader(index_file):
+        ticket_path = ROOT / "tickets/train" / Path(row["filename"]).name
+        with ticket_path.open(encoding="utf-8") as ticket_file:
+            train_tickets.append(json.load(ticket_file))
 
-# Load train labels
-with open(ROOT / "labels/train_labels.json") as f:
-    train_labels = json.load(f)
+with (ROOT / "labels/train_labels.json").open(encoding="utf-8") as label_file:
+    train_labels = json.load(label_file)
 
-# Load reference data
-with open(ROOT / "data/stores.csv") as f:
-    stores = list(csv.DictReader(f))
+with (ROOT / "data/stores.csv").open(encoding="utf-8", newline="") as store_file:
+    stores = list(csv.DictReader(store_file))
 
-with open(ROOT / "data/assets.csv") as f:
-    assets = list(csv.DictReader(f))
+with (ROOT / "data/assets.csv").open(encoding="utf-8", newline="") as asset_file:
+    assets = list(csv.DictReader(asset_file))
 ```
 
 ---
@@ -121,16 +145,16 @@ with open(ROOT / "data/assets.csv") as f:
 
 ---
 
-## Ticket Distribution
+## Ticket coverage and evaluation
 
-| Category        | Count | %   |
-| --------------- | ----- | --- |
-| POS             | ~80   | 25% |
-| Soft Serve      | ~60   | 19% |
-| Online Orders   | ~60   | 19% |
-| Wi-Fi / Network | ~50   | 16% |
-| Printers        | ~40   | 12% |
-| Kiosks          | ~30   | 9%  |
+The training subset contains 256 tickets across POS, Soft Serve, Online Orders, Wi-Fi / Network, Printers, and Kiosks. Use [train_index.csv](tickets/train_index.csv) for the current category/priority distribution rather than estimates for the original full dataset.
 
-Mix of thorough ↔ sparse, L1 self-service ↔ L2 escalation, P1 ↔ P4.  
+Tickets mix thorough and sparse reports, L1 self-service and L2 escalation, and P1–P4 priorities. Ground-truth labels identify expected routing, relevant KB documents, and escalation decisions. The backend's training evaluation suite uses tickets and labels; curated/custom suites exercise additional multi-turn and failure scenarios. See [testing and evaluation](../phdata/microservices/backend/README.md#testing-and-evaluation).
+
+## Handling notes
+
+- All records describe a fictional organization; they are not live operational data.
+- Preserve source IDs and relative KB paths so historical links and evaluation expectations remain valid.
+- Markdown is grounded support evidence; ticket descriptions and imported text are data, not trusted agent instructions.
+- Demo manager credentials are for local use only. Do not expose a deployment containing them as a production service.
 

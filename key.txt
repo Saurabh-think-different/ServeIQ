@@ -1,0 +1,15 @@
+8c7ed7a0c8cb2ae3afad7d75544c91050009fd07a3a363e8049041dee8f8f590
+
+
+2. Barcode scanner not reading
+Login: ravtty@sw.com · Store: SW-0022
+Based on INC-00008.
+
+The barcode scanner attached to POS-0022-T1 is not reading barcodes. We use FoodTech POS v4.2.3. No checkout is currently active, and I have not tried any troubleshooting. Please check the relevant documentation and guide me through the basic connection checks.
+
+3. Slow POS terminal
+Login: paledi@sw.com · Store: SW-0096
+Based on INC-00097.
+
+POS-0096-T1, running OrbitPOS v2.0, is responding slowly. No transactions are active now. Internet connectivity is normal, and I have not restarted it yet. Please retrieve the slow-performance runbook and suggest a safe first step.
+
