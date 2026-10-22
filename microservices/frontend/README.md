@@ -23,7 +23,17 @@ included in the production application.
   last-sync inventory.
 - **About:** the actual POC architecture and limitations, not a live monitoring page.
 
-Analysis/run/action UI is intentionally deferred until those backend APIs exist.
+- **Runs & actions:** explicit, transfer-confirmed run starts, persisted history,
+  routing/questions, cited guidance, requester/ticket summaries, proposal previews,
+  second-confirmation approve/reject controls, and paginated audit history.
+  Deterministic routing is distinguished from model selection. Historical v1
+  records are labeled untyped and never treated as modern guidance/actions.
+
+Only recovery keys, selected run IDs and unconfirmed decision choices are kept in
+browser-tab session storage; no tokens, reports, evidence or provider credentials
+are stored there. Writes are disabled when this recovery storage is unavailable.
+Unknown outcomes require a successful read and an explicit same-key/same-choice
+replay, never an automatic retry. Questions are displayed, not editable answers.
 A source search is not a diagnosis or permission to perform an action. Similarity
 is not confidence, and target deadlines do not establish an SLA breach.
 
@@ -83,8 +93,10 @@ backend Kubernetes Service, preserving the path and Authorization header. Browse
 code does not depend on Kubernetes DNS and never receives provider credentials.
 
 The frontend `/healthz` checks the static server only; backend health is separate.
-The image/cluster/proxy integration has not been run as part of this frontend batch;
-these are the user's manual checks:
+Image builds and isolated Rancher proxy/auth/intake, concurrent reads, persisted
+run summaries, proposal rejection and audit rendering have been exercised locally.
+These remain useful manual checks, including device/keyboard cases not covered by
+that smoke run:
 
 1. Start the existing root Skaffold flow; open localhost:8080.
 2. Connect with the configured operator token. Verify wrong credentials fail.

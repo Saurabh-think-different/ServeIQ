@@ -1,3 +1,4 @@
+import { workflowMock } from './workflowMock';
 import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import DataView from '../src/views/DataView.vue';
@@ -10,7 +11,7 @@ function setup() {
   const ingest = vi.fn<ApiClient['ingest']>().mockResolvedValue({ status: 'succeeded', stages: [stage()] });
   const searchKnowledge = vi.fn<ApiClient['searchKnowledge']>().mockResolvedValue({ passages: [], evidence_gap: true, warnings: [] });
   const api: ApiClient = {
-    ingest, searchKnowledge,
+    ...workflowMock(), ingest, searchKnowledge,
     listIncidents: vi.fn(), createIncident: vi.fn(), getIncident: vi.fn(), getContext: vi.fn(),
   };
   return { wrapper: mount(DataView, { props: { api } }), ingest, searchKnowledge };
@@ -109,7 +110,7 @@ describe('DataView bundled imports', () => {
     await flushPromises();
     expect(wrapper.get('[data-testid="import-error"]').text()).toContain('outcome unknown');
     expect(wrapper.get('[data-testid="import-error"]').text()).toContain('rollback is not assumed');
-    expect(wrapper.get('[data-testid="import-error"]').text()).toContain('idempotent');
+    expect(wrapper.get('[data-testid="import-error"]').text()).toContain('check before explicitly retrying');
     expect(wrapper.text()).not.toContain('private transport details');
     expect(wrapper.get('[data-testid="import-form"] button').attributes('disabled')).toBeUndefined();
     await wrapper.get('[data-testid="import-form"]').trigger('submit');
@@ -188,7 +189,7 @@ describe('DataView retrieval playground', () => {
     expect(wrapper.get('[data-testid="import-form"] button').attributes('disabled')).toBeUndefined();
     reject(new Error('private provider details'));
     await flushPromises();
-    expect(wrapper.get('[data-testid="search-error"]').text()).toContain('Knowledge search failed');
+    expect(wrapper.get('[data-testid="search-error"]').text()).toContain('Knowledge search could not be confirmed');
     expect(wrapper.get('[data-testid="search-results"]').text()).toContain('first query');
     expect(wrapper.find('article[aria-label="Citation 1"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="import-status"]').text()).toContain('succeeded');

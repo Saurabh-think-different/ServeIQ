@@ -1,3 +1,4 @@
+import { workflowMock } from './workflowMock';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import IncidentView from '../src/views/IncidentView.vue';
@@ -51,6 +52,7 @@ function results(): SearchResponse {
 }
 function api() {
   return {
+    ...workflowMock(),
     listIncidents: vi.fn<ApiClient['listIncidents']>(), createIncident: vi.fn<ApiClient['createIncident']>(),
     getIncident: vi.fn<ApiClient['getIncident']>().mockResolvedValue(ticket()),
     getContext: vi.fn<ApiClient['getContext']>().mockResolvedValue(context()),
@@ -76,7 +78,7 @@ async function clickButton(wrapper: VueWrapper, text: string) {
   await button!.trigger('click');
   await flushPromises();
 }
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); });
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); sessionStorage.clear(); });
 
 it('section links prevent route-hash changes so the incident stays mounted', async () => {
   const wrapper = render();
@@ -145,7 +147,7 @@ describe('incident workspace', () => {
     expect(wrapper.get('#incident-overview').text()).toContain('Reported, not verified');
     expect(wrapper.get('#incident-overview').text()).toContain('reported-store');
     expect(wrapper.get('#incident-context').text()).toContain('S1');
-    expect(wrapper.text()).toContain('Next backend stage; no analysis executed');
+    expect(wrapper.text()).toContain('Runs do not start automatically');
     expect(wrapper.findAll('button').some(button => /approve|replay|escalate/i.test(button.text()))).toBe(false);
   });
 

@@ -1,4 +1,4 @@
-import type { ApiClient, IncidentContext, IncidentPage, IncidentResult, PipelineReport, SearchResponse } from './types'
+import type { ApiClient, IncidentContext, IncidentPage, IncidentResult, PipelineReport, SearchResponse, RunResult, RunReadResult, RunPage, ActionProposalList, ActionDecisionResult, AuditPage } from './types'
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); this.name = 'ApiError' }
@@ -7,7 +7,7 @@ export class ApiError extends Error {
 export function createApiClient(token: string, onUnauthorized: () => void = () => {}): ApiClient & { disconnect(): void } {
   let active = true
   const controllers = new Set<AbortController>()
-  async function request<T>(path: string, body?: unknown): Promise<T> {
+  async function request<T>(path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     if (!active) throw new ApiError(401, 'Session ended. Reconnect to continue.')
     const controller = new AbortController()
     controllers.add(controller)
@@ -15,7 +15,7 @@ export function createApiClient(token: string, onUnauthorized: () => void = () =
     try {
       const response = await fetch(`/api${path}`, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        headers: { ...extraHeaders, Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal, credentials: 'omit', redirect: 'error', cache: 'no-store',
       })
@@ -45,7 +45,14 @@ export function createApiClient(token: string, onUnauthorized: () => void = () =
       controllers.delete(controller)
     }
   }
+  const pageQuery = (options: { limit?: number; offset?: number } = {}) => new URLSearchParams(Object.entries(options).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
   const api: ApiClient & { disconnect(): void } = {
+    startRun: (id, key) => request<RunResult>(`/incidents/${encodeURIComponent(id)}/runs`, {}, { 'Idempotency-Key': key }),
+    listRuns: (id, options) => request<RunPage>(`/incidents/${encodeURIComponent(id)}/runs?${pageQuery(options)}`),
+    getRun: id => request<RunReadResult>(`/runs/${encodeURIComponent(id)}`),
+    listActions: id => request<ActionProposalList>(`/runs/${encodeURIComponent(id)}/actions`),
+    decideAction: (id, decision) => request<ActionDecisionResult>(`/actions/${encodeURIComponent(id)}/decision`, { decision }),
+    listAudit: (id, options) => request<AuditPage>(`/incidents/${encodeURIComponent(id)}/audit?${pageQuery(options)}`),
     listIncidents(options = {}) {
       const query = new URLSearchParams()
       for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== '') query.set(key, String(value))

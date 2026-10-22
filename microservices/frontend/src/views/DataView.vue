@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { ambiguousWrite, operationError } from '../api/errors';
 import type { ApiClient, IngestionReport, IngestionTarget, PipelineReport, SearchRequest, SearchResponse } from '../api/types';
 
 const props = defineProps<{ api: ApiClient }>();
@@ -18,6 +19,14 @@ const searching = ref(false);
 const searchError = ref('');
 const results = ref<SearchResponse | null>(null);
 const resultQuery = ref('');
+let epoch = 0;
+let alive = true;
+watch(() => props.api, () => {
+  epoch++;
+  importing.value = false; searching.value = false; consent.value = false;
+  report.value = null; results.value = null; importError.value = ''; searchError.value = ''; resultQuery.value = '';
+}, { flush: 'sync' });
+onBeforeUnmount(() => { alive = false; epoch++; });
 
 function countNames(stage: IngestionReport): string[] {
   return [...new Set([
@@ -29,15 +38,17 @@ function countNames(stage: IngestionReport): string[] {
 async function importData() {
   if (importing.value || (needsConsent.value && !consent.value)) return;
   const selectedTarget = target.value;
+  const generation = epoch;
   consent.value = false;
   importing.value = true;
   importError.value = '';
   try {
-    report.value = await props.api.ingest(selectedTarget);
-  } catch {
-    importError.value = 'Import outcome unknown: the request could not be confirmed. Some changes may have completed; rollback is not assumed. Retrying the same bundled import is idempotent.';
+    const result = await props.api.ingest(selectedTarget);
+    if (alive && generation === epoch) report.value = result;
+  } catch (error) {
+    if (alive && generation === epoch) importError.value = `${operationError(error, 'Import')} ${ambiguousWrite(error) ? 'Import outcome unknown: some changes may have completed; rollback is not assumed. There is no import-status read API. Ask the operator to check before explicitly retrying the bundled import.' : 'The request was rejected; correct the issue before retrying.'}`;
   } finally {
-    importing.value = false;
+    if (alive && generation === epoch) importing.value = false;
   }
 }
 
@@ -49,6 +60,10 @@ async function search() {
     searchError.value = 'Enter a query.';
     return;
   }
+  if (query.value.trim().length > 2000) {
+    searchError.value = 'Query must be at most 2000 characters.';
+    return;
+  }
   if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 10) {
     searchError.value = 'Limit must be a whole number from 1 to 10.';
     return;
@@ -57,14 +72,17 @@ async function search() {
   if (category.value.trim()) request.category = category.value.trim();
   if (model.value.trim()) request.model = model.value.trim();
   if (version.value.trim()) request.system_version = version.value.trim();
+  const generation = epoch;
   searching.value = true;
   try {
-    results.value = await props.api.searchKnowledge(request);
+    const result = await props.api.searchKnowledge(request);
+    if (!alive || generation !== epoch) return;
+    results.value = result;
     resultQuery.value = request.query;
-  } catch {
-    searchError.value = 'Knowledge search failed. Try again. Any results below are from the last successful search in this view.';
+  } catch (error) {
+    if (alive && generation === epoch) searchError.value = `${operationError(error, 'Knowledge search')} Any results below are from the last successful search in this view.`;
   } finally {
-    searching.value = false;
+    if (alive && generation === epoch) searching.value = false;
   }
 }
 </script>
@@ -138,7 +156,7 @@ async function search() {
       <header class="card-header"><h2 id="search-heading">Retrieval playground</h2></header>
       <p class="alert warning">Your query is sent to the configured embedding provider (OpenAI). Redaction is limited, not a guarantee of removing sensitive information. Do not include secrets or personal data.</p>
       <form class="stack" data-testid="search-form" novalidate @submit.prevent="search">
-        <label class="field">Query<textarea v-model="query" data-testid="search-query" rows="3" :disabled="searching" /></label>
+        <label class="field">Query<textarea v-model="query" data-testid="search-query" rows="3" maxlength="2000" :disabled="searching" /></label>
         <div class="filter-grid">
           <label class="field">Exact category (optional)<input v-model="category" data-testid="search-category" :disabled="searching" /></label>
           <label class="field">Exact model (optional)<input v-model="model" data-testid="search-model" :disabled="searching" /></label>

@@ -45,7 +45,63 @@ export interface IngestionReport {
   deleted: Record<string, number>; warnings: string[]; errors: string[]; path_mappings: Record<string, number>;
 }
 export interface PipelineReport { status: 'succeeded' | 'partial' | 'failed'; stages: IngestionReport[] }
+export interface RunQuestion { question_id: string; text: string }
+export interface ReviewedStep { step_id: string; instruction: string; evidence_ids: string[]; operator_role: string; applicability_notes: string[] }
+export interface EvidenceSnapshot extends Omit<Passage, 'applicability'> {
+  evidence_id: string; content_sha256: string; applicability: 'context_match' | 'unknown';
+}
+export interface RunResult {
+  representation?: never;
+  run_id: string; ticket_id: string; status: 'running' | 'completed' | 'failed';
+  started_at: string; completed_at: string | null;
+  routing_outcome: 'l1_self_service' | 'l1_guided' | 'l2_escalation' | 'non_it' | 'needs_clarification' | null;
+  decision_mechanism: 'deterministic' | 'generation' | null;
+  summary_for_requester: string | null; summary_for_ticket: string | null;
+  questions: RunQuestion[]; steps: ReviewedStep[]; evidence: EvidenceSnapshot[]; warnings: string[];
+  error_code: string | null; error_message: string | null; model: string | null; prompt_version: string | null;
+}
+export interface LegacyRunResult {
+  representation: 'legacy_v1'; run_id: string; ticket_id: string; status: string;
+  started_at: string; completed_at: string | null; routing_outcome: string | null;
+  decision_summary: string | null; model: string | null; prompt_version: string | null;
+  evidence_json: string; response_json: string | null;
+}
+export type RunReadResult = RunResult | LegacyRunResult;
+export interface RunPage { runs: RunReadResult[]; total: number; limit: number; offset: number }
+export type ActionDecision = 'approve' | 'reject';
+export interface ActionProposal {
+  action_id: string; ticket_id: string; run_id: string;
+  action_type: 'simulate_post_comment' | 'simulate_escalation';
+  preview: { version: 1; comment: string } | { version: 1; summary: string; reason: string };
+  proposal_hash: string; context_fingerprint: string; status: 'pending' | 'rejected' | 'completed';
+  created_at: string; decided_at: string | null; decided_by: string | null; result_summary: string | null;
+}
+export interface ActionProposalList { run_id: string; actions: ActionProposal[] }
+export interface ActionDecisionResult {
+  action_id: string; decision: ActionDecision; status: 'rejected' | 'completed';
+  decided_at: string; decided_by: string; result_summary: string;
+}
+export interface AuditEvent {
+  representation?: never;
+  audit_event_id: number; ticket_id: string; run_id: string | null; action_id: string | null;
+  actor_type: 'system' | 'agent' | 'human'; actor_id: string | null;
+  event_type: 'run_started' | 'run_completed' | 'run_failed' | 'proposal_created' | 'proposal_approved' | 'proposal_rejected' | 'simulation_completed';
+  occurred_at: string; approval_status: string | null;
+  payload: { version: 1; summary: string; action_id: string | null; error_code: string | null };
+}
+export interface LegacyAuditEvent {
+  representation: 'legacy_v1'; audit_event_id: number; ticket_id: string; run_id: string | null;
+  actor_type: string; actor_id: string | null; event_type: string; occurred_at: string;
+  approval_status: string | null; payload: unknown;
+}
+export interface AuditPage { events: (AuditEvent | LegacyAuditEvent)[]; total: number; limit: number; offset: number }
 export interface ApiClient {
+  startRun(ticketId: string, idempotencyKey: string): Promise<RunResult>;
+  listRuns(ticketId: string, options?: { limit?: number; offset?: number }): Promise<RunPage>;
+  getRun(runId: string): Promise<RunReadResult>;
+  listActions(runId: string): Promise<ActionProposalList>;
+  decideAction(actionId: string, decision: ActionDecision): Promise<ActionDecisionResult>;
+  listAudit(ticketId: string, options?: { limit?: number; offset?: number }): Promise<AuditPage>;
   listIncidents(options?: { limit?: number; offset?: number; status?: string; category?: string }): Promise<IncidentPage>;
   createIncident(input: IncidentCreate): Promise<IncidentResult>;
   getIncident(ticketId: string): Promise<IncidentResult>;

@@ -1,3 +1,4 @@
+import { workflowMock } from './workflowMock';
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
@@ -26,6 +27,7 @@ function page(incidents: Incident[] = [incident()], total = incidents.length, of
 
 function apiMock() {
   return {
+    ...workflowMock(),
     listIncidents: vi.fn<ApiClient['listIncidents']>().mockResolvedValue(page()),
     createIncident: vi.fn<ApiClient['createIncident']>().mockResolvedValue({ incident: incident(), warnings: [] }),
     getIncident: vi.fn<ApiClient['getIncident']>(), getContext: vi.fn<ApiClient['getContext']>(),

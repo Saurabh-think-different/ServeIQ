@@ -56,6 +56,18 @@ spec:
                   name: servewell-ingestion
                   key: OPENAI_API_KEY
                   optional: true
+            - name: GENERATION_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: servewell-ingestion
+                  key: GENERATION_MODEL
+                  optional: true
+            - name: REVIEWED_POLICY_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: servewell-reviewed-policy
+                  key: REVIEWED_POLICY_FILE
+                  optional: true
           startupProbe:
             httpGet:
               path: /api/health
@@ -77,10 +89,20 @@ spec:
           volumeMounts:
             - name: backend-storage
               mountPath: /var/lib/servewell
+            - name: reviewed-policy
+              mountPath: /etc/servewell/policies
+              readOnly: true
       volumes:
         - name: backend-storage
           persistentVolumeClaim:
             claimName: servewell-backend-pvc
+        - name: reviewed-policy
+          configMap:
+            name: servewell-reviewed-policy
+            optional: true
+            items:
+              - key: reviewed-policy.json
+                path: reviewed-policy.json
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { ApiClient, IncidentContext, IncidentResult, SearchRequest, SearchResponse } from '../api/types';
+import RunWorkspace from './RunWorkspace.vue';
 
 const props = defineProps<{ api: ApiClient; ticketId: string }>();
 const emit = defineEmits<{ back: []; 'open-incident': [ticketId: string] }>();
@@ -146,6 +147,7 @@ onBeforeUnmount(() => { alive = false; navigation++; });
       <a href="#incident-overview" @click.prevent="scrollToSection('incident-overview')">Overview</a>
       <a href="#incident-context" @click.prevent="scrollToSection('incident-context')">Context</a>
       <a href="#incident-knowledge" @click.prevent="scrollToSection('incident-knowledge')">Knowledge</a>
+      <a href="#incident-runs" @click.prevent="scrollToSection('incident-runs')">Runs &amp; actions</a>
     </nav>
 
     <div v-if="detailLoading" role="status" class="muted">Loading ticket detail…</div>
@@ -248,6 +250,7 @@ onBeforeUnmount(() => { alive = false; navigation++; });
         <section id="incident-knowledge" class="card stack" aria-labelledby="knowledge-heading">
           <div class="card-header"><h2 id="knowledge-heading">Cited knowledge</h2><span class="badge">Manual retrieval</span></div>
           <p class="muted">Search source passages. Retrieval is not analysis, a resolution plan, or confirmation of applicability.</p>
+          <p class="alert warning">Your query is sent to OpenAI for embedding when you click Search knowledge. Redaction is limited, not a guarantee of removing sensitive information. Do not include secrets or personal data.</p>
           <form class="stack" @submit.prevent="searchKnowledge">
             <label class="field" for="incident-query">Knowledge query
               <textarea id="incident-query" v-model="query" rows="3" maxlength="2000" @input="queryEdited = true" />
@@ -300,10 +303,7 @@ onBeforeUnmount(() => { alive = false; navigation++; });
       </ol>
       <p v-else class="empty-state">No history available.</p>
     </section>
-    <section class="card" aria-labelledby="analysis-heading">
-      <h2 id="analysis-heading">Analysis &amp; approvals</h2>
-      <p class="muted">Next backend stage; no analysis executed. No actions or approvals are available in this workspace.</p>
-    </section>
+    <RunWorkspace :api="api" :ticket-id="ticketId" @changed="loadDetail(); loadContext()" />
   </div>
 </template>
 
