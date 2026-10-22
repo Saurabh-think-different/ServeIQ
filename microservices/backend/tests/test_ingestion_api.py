@@ -54,6 +54,18 @@ def test_ingestion_requires_operator_token(client, authorization):
     assert response.headers["www-authenticate"] == "Bearer"
 
 
+def test_swagger_declares_operator_bearer_authorization(client):
+    schema = client.get("/openapi.json").json()
+    assert schema["components"]["securitySchemes"]["OperatorBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Enter the operator token only; Swagger adds the Bearer prefix.",
+    }
+    operation = schema["paths"]["/api/ingestions"]["post"]
+    assert {"OperatorBearer": []} in operation["security"]
+    assert all(parameter["name"].lower() != "authorization" for parameter in operation.get("parameters", []))
+
+
 def test_valid_token_returns_blocked_knowledge_without_api_key(client, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     response = client.post(
